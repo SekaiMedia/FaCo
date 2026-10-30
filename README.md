@@ -24,11 +24,14 @@ gleiche Ziele fahren gleichzeitig, und jeder Raum zeigt als Entität, warum er s
 
 ## Stand
 
-In Entwicklung, noch keine Beta. Fertig ist die Entscheidungslogik mit Tests, die Anbindung an
-Home Assistant folgt. Der Name kann sich bis zur ersten Beta noch ändern.
+Beta. Eingerichtet werden Haus und Räume, gerechnet wird mit Tagesablauf, Fenster, Schlafen,
+Hitzeschutz und Handbetrieb, angezeigt werden je Raum Grund und Zielposition. Noch nicht
+enthalten: Situationen, Sicherheit, Abendkühlung, Wecker, Regenschutz und Benachrichtigungen.
 
-Betas erscheinen als Vorabversion und lassen sich in HACS beziehungsweise im Marketplace über
-„Beta-Versionen anzeigen“ auswählen. Releases folgen, wenn eine Beta sich bewährt hat.
+Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Version vom November,
+`2026.11.0-beta.1` eine Beta dafür. Die Nummer sagt, wann eine Version erschien, nicht für welche
+Home-Assistant-Version sie gilt. Eine Beta wird stabil, wenn sie mindestens eine Woche ohne
+Eingriff im Betrieb lief, auch mit der neuen Home-Assistant-Version des Monats.
 
 ## Installation (Beta)
 
@@ -36,8 +39,12 @@ Betas erscheinen als Vorabversion und lassen sich in HACS beziehungsweise im Mar
    hinzufügen, Kategorie Integration.
 2. Facade Conductor öffnen, „Beta-Versionen anzeigen“ einschalten und die neueste Beta laden.
 3. Home Assistant neu starten.
-4. Einstellungen, Geräte und Dienste, Integration hinzufügen: Facade Conductor.
-5. Das Haus einrichten, danach bei der Integration „Raum hinzufügen“.
+4. Damit HACS auch spätere Betas als Update anbietet: unter Geräte und Dienste, HACS, Gerät
+   Facade Conductor den Schalter „Vorabversion“ aktivieren und einschalten. Sonst meldet HACS
+   den Stand des Hauptzweigs als Update, und der ist älter als die Beta.
+5. Einstellungen, Geräte und Dienste, Integration hinzufügen: Facade Conductor.
+6. Das Haus einrichten. Danach erscheint „Facade Conductor“ in der Seitenleiste: Dort zeigt die
+   Übersicht jeden Raum mit Position und Grund, unter „Räume“ werden Räume angelegt und eingestellt.
 
 **Neu eingerichtet läuft alles im Probelauf.** Die Integration rechnet und zeigt je Raum
 „Grund“ und „Zielposition“, fährt aber nichts. So lässt sie sich neben bestehenden
@@ -60,13 +67,16 @@ per room (safety, manual, window, situation, sleep, heat protection, daily sched
 all rooms in the same cycle, moves matching targets at the same time and exposes the reason
 as an entity.
 
-**Status:** in development, no beta yet. The decision logic and its tests are done, the Home
-Assistant integration follows. The name may still change before the first beta.
+**Status:** beta. Houses and rooms can be set up; daily schedule, windows, sleep, heat protection
+and manual moves are handled, and each room shows its reason and target position. Versions
+follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
 **Installation (beta):** add this repository to HACS or the Marketplace as a custom repository
 (category integration), enable "Show beta versions", download, restart Home Assistant and add
-the Facade Conductor integration. New setups start in **dry run**: reasons and target positions
-are shown, nothing moves until you switch the operating mode to automatic.
+the Facade Conductor integration. Rooms are added and adjusted on the Facade Conductor page in
+the sidebar. New setups start in **dry run**: reasons and target positions
+are shown, nothing moves until you switch the operating mode to automatic. To receive later
+betas as updates, enable the HACS "Pre-release" switch on the Facade Conductor device.
 
 **Help:** please open an [issue](https://github.com/SekaiMedia/FaCo/issues).
 

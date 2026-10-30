@@ -5,11 +5,11 @@
   "categories": ["blinds_curtains"],
   "codeowners": ["@Mcsaxo1990"],
   "config_flow": true,
-  "dependencies": ["sun"],
+  "dependencies": ["frontend", "http", "panel_custom", "sun", "websocket_api"],
   "documentation": "https://github.com/SekaiMedia/FaCo",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/SekaiMedia/FaCo/issues",
   "requirements": [],
-  "version": "2026.11.0-beta.1"
+  "version": "2026.11.0-beta.2"
 }

@@ -1,0 +1,170 @@
+"""Schnittstelle der Einstellungsseite: Stand lesen, Räume anlegen, ändern und entfernen.
+
+Gespeichert wird in denselben Einträgen wie über die Dialoge. Jede Änderung lädt die
+Integration neu, wie nach „Konfigurieren“.
+"""
+
+from __future__ import annotations
+
+from types import MappingProxyType
+from typing import Any
+
+import voluptuous as vol
+
+from homeassistant.components import websocket_api
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
+
+from .config_flow import _area_entities
+from .const import (
+    CONF_ADVANCED,
+    CONF_AREA,
+    CONF_COVERS,
+    CONF_DIRECTION,
+    CONF_POSITIONS,
+    CONF_SLEEP_PAUSE_END,
+    CONF_SLEEP_PAUSE_START,
+    CONF_SLEEP_SENSOR,
+    CONF_WINDOW_MEANS,
+    CONF_WINDOW_SENSOR,
+    DEFAULT_POSITIONS,
+    DIRECTION_OPTIONS,
+    DOMAIN,
+    POSITION_KEYS,
+    SUBENTRY_ROOM,
+    WINDOW_MEANS_OPTIONS,
+)
+
+TIME_TEXT = vol.Match(r"^\d{2}:\d{2}(:\d{2})?$")
+PERCENT = vol.All(vol.Coerce(int), vol.Range(min=0, max=100))
+
+ROOM_CHANGES = vol.Schema(
+    {
+        vol.Optional(CONF_COVERS): vol.All(cv.ensure_list, [cv.entity_domain("cover")]),
+        vol.Optional(CONF_WINDOW_SENSOR): vol.Any(None, cv.entity_domain("binary_sensor")),
+        vol.Optional(CONF_WINDOW_MEANS): vol.In(WINDOW_MEANS_OPTIONS),
+        vol.Optional(CONF_SLEEP_SENSOR): vol.Any(None, cv.entity_domain(["binary_sensor", "input_boolean"])),
+        vol.Optional(CONF_DIRECTION): vol.In(DIRECTION_OPTIONS),
+        vol.Optional(CONF_POSITIONS): {vol.In(POSITION_KEYS): vol.Any(None, PERCENT)},
+        vol.Optional(CONF_ADVANCED): {
+            vol.In([CONF_SLEEP_PAUSE_START, CONF_SLEEP_PAUSE_END]): vol.Any(None, TIME_TEXT)
+        },
+    }
+)
+
+
+@callback
+def async_register(hass: HomeAssistant) -> None:
+    for command in (ws_info, ws_room_add, ws_room_update, ws_room_remove):
+        websocket_api.async_register_command(hass, command)
+
+
+def _entry(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> ConfigEntry | None:
+    entries = hass.config_entries.async_loaded_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_loaded", "Facade Conductor ist nicht geladen")
+        return None
+    return entries[0]
+
+
+def _room(entry: ConfigEntry, connection: websocket_api.ActiveConnection, msg: dict) -> ConfigSubentry | None:
+    sub = entry.subentries.get(msg["room_id"])
+    if sub is None or sub.subentry_type != SUBENTRY_ROOM:
+        connection.send_error(msg["id"], "not_found", "Raum nicht gefunden")
+        return None
+    return sub
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/info"})
+@websocket_api.require_admin
+@callback
+def ws_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    if (entry := _entry(hass, connection, msg)) is None:
+        return
+    conductor = entry.runtime_data
+    ent_reg = er.async_get(hass)
+    live = {room.subentry_id: room for room in conductor.rooms}
+    rooms = []
+    for sub in entry.subentries.values():
+        if sub.subentry_type != SUBENTRY_ROOM:
+            continue
+        room = live.get(sub.subentry_id)
+        decision = room.decision if room else None
+        current = conductor._current(room) if room else {}
+        rooms.append(
+            {
+                "id": sub.subentry_id,
+                "name": sub.title,
+                "data": dict(sub.data),
+                "position": round(sum(current.values()) / len(current)) if current else None,
+                "target": decision.position if decision else None,
+                "reason": decision.reason.value if decision else None,
+                "reason_entity": ent_reg.async_get_entity_id("sensor", DOMAIN, f"{sub.subentry_id}_reason"),
+            }
+        )
+    connection.send_result(
+        msg["id"],
+        {
+            "mode": conductor.mode,
+            "mode_entity": ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_mode"),
+            "phase": conductor.phase.value if conductor.phase else None,
+            "positions": {k: int(v) for k, v in {**DEFAULT_POSITIONS, **conductor.house.get(CONF_POSITIONS, {})}.items()},
+            "rooms": sorted(rooms, key=lambda r: r["name"].casefold()),
+        },
+    )
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/room/add", vol.Required("area"): str})
+@websocket_api.require_admin
+@callback
+def ws_room_add(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Raum aus einem Bereich anlegen, Rollläden und Fensterkontakt darin vorschlagen."""
+    if (entry := _entry(hass, connection, msg)) is None:
+        return
+    area = ar.async_get(hass).async_get_area(msg["area"])
+    if area is None:
+        connection.send_error(msg["id"], "not_found", "Bereich nicht gefunden")
+        return
+    if any(s.data.get(CONF_AREA) == area.id for s in entry.subentries.values()):
+        connection.send_error(msg["id"], "already_configured", "Für diesen Bereich gibt es schon einen Raum")
+        return
+    windows = _area_entities(hass, area.id, "binary_sensor", {"window", "door", "opening"})
+    data = {
+        CONF_AREA: area.id,
+        CONF_COVERS: _area_entities(hass, area.id, "cover"),
+        CONF_WINDOW_SENSOR: windows[0] if windows else None,
+        CONF_DIRECTION: "none",
+    }
+    sub = ConfigSubentry(data=MappingProxyType(data), subentry_type=SUBENTRY_ROOM, title=area.name, unique_id=None)
+    hass.config_entries.async_add_subentry(entry, sub)
+    connection.send_result(msg["id"], {"id": sub.subentry_id})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/room/update",
+        vol.Required("room_id"): str,
+        vol.Required("changes"): ROOM_CHANGES,
+    }
+)
+@websocket_api.require_admin
+@callback
+def ws_room_update(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    if (entry := _entry(hass, connection, msg)) is None or (sub := _room(entry, connection, msg)) is None:
+        return
+    data: dict[str, Any] = {**sub.data, **msg["changes"]}
+    hass.config_entries.async_update_subentry(entry, sub, data=data)
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/room/remove", vol.Required("room_id"): str})
+@websocket_api.require_admin
+@callback
+def ws_room_remove(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    if (entry := _entry(hass, connection, msg)) is None or _room(entry, connection, msg) is None:
+        return
+    hass.config_entries.async_remove_subentry(entry, msg["room_id"])
+    connection.send_result(msg["id"])
