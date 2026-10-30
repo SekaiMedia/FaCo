@@ -30,6 +30,20 @@ Home Assistant folgt. Der Name kann sich bis zur ersten Beta noch ändern.
 Betas erscheinen als Vorabversion und lassen sich in HACS beziehungsweise im Marketplace über
 „Beta-Versionen anzeigen“ auswählen. Releases folgen, wenn eine Beta sich bewährt hat.
 
+## Installation (Beta)
+
+1. In HACS beziehungsweise im Marketplace dieses Repository als benutzerdefiniertes Repository
+   hinzufügen, Kategorie Integration.
+2. Facade Conductor öffnen, „Beta-Versionen anzeigen“ einschalten und die neueste Beta laden.
+3. Home Assistant neu starten.
+4. Einstellungen, Geräte und Dienste, Integration hinzufügen: Facade Conductor.
+5. Das Haus einrichten, danach bei der Integration „Raum hinzufügen“.
+
+**Neu eingerichtet läuft alles im Probelauf.** Die Integration rechnet und zeigt je Raum
+„Grund“ und „Zielposition“, fährt aber nichts. So lässt sie sich neben bestehenden
+Automationen testen. Erst mit der Betriebsart „Automatik“ steuert sie die Rollläden. Dann
+sollten die alten Automationen für dieselben Rollläden aus sein.
+
 ## Hilfe und Mitmachen
 
 Fragen, Fehler und Ideen bitte als [Issue](https://github.com/SekaiMedia/FaCo/issues).
@@ -48,6 +62,11 @@ as an entity.
 
 **Status:** in development, no beta yet. The decision logic and its tests are done, the Home
 Assistant integration follows. The name may still change before the first beta.
+
+**Installation (beta):** add this repository to HACS or the Marketplace as a custom repository
+(category integration), enable "Show beta versions", download, restart Home Assistant and add
+the Facade Conductor integration. New setups start in **dry run**: reasons and target positions
+are shown, nothing moves until you switch the operating mode to automatic.
 
 **Help:** please open an [issue](https://github.com/SekaiMedia/FaCo/issues).
 

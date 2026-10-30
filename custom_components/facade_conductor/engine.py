@@ -178,6 +178,49 @@ def batch(targets: dict[str, int], current: dict[str, int], tolerance: int = 2) 
     return out
 
 
+DIRECTIONS = {"n": 0, "ne": 45, "e": 90, "se": 135, "s": 180, "sw": 225, "w": 270, "nw": 315}
+
+
+def direction_range(direction: str, width: float = 45) -> tuple[float, float]:
+    """Sonnenwinkel, in dem die Sonne auf ein Fenster dieser Richtung scheint."""
+    center = DIRECTIONS[direction]
+    return ((center - width) % 360, (center + width) % 360)
+
+
+def phase_for(hour: float, night_start: float, night_end: float, dark: bool) -> Phase:
+    """Nachtruhe nach Uhrzeit. Dunkel am Morgen bleibt Nacht, dunkel am Abend ist Dämmerung."""
+    if situation_active(hour, night_start, night_end):
+        return Phase.NIGHT
+    if dark:
+        return Phase.NIGHT if hour < 12 else Phase.DUSK
+    return Phase.DAY
+
+
+class CommandLog:
+    """Merkt sich eigene Befehle, damit fremde Bewegungen als Handbetrieb erkannt werden."""
+
+    def __init__(self, grace: float = 120) -> None:
+        self.grace = grace
+        self._sent: dict[str, float] = {}
+        self._target: dict[str, int] = {}
+
+    def sent(self, entity_id: str, now: float, target: int | None = None) -> None:
+        self._sent[entity_id] = now
+        if target is not None:
+            self._target[entity_id] = target
+
+    def in_flight(self, entity_id: str, target: int, now: float) -> bool:
+        """Dasselbe Ziel wurde gerade geschickt, der Rollladen fährt noch: nicht erneut senden."""
+        last = self._sent.get(entity_id)
+        return last is not None and now - last < self.grace and self._target.get(entity_id) == target
+
+    def is_manual(self, entity_id: str, old: int | None, new: int | None, now: float) -> bool:
+        if old is None or new is None or abs(new - old) <= 2:
+            return False
+        last = self._sent.get(entity_id)
+        return last is None or now - last >= self.grace
+
+
 class Hysteresis:
     """Zwei Schwellen gegen Hin und Her: dunkel unter low, wieder hell erst über high."""
 

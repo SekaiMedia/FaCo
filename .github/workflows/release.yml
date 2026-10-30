@@ -1,0 +1,24 @@
+name: Veröffentlichen
+
+# Ein Tag wie v0.1.0-beta.1 erzeugt eine Vorabversion, v0.1.0 ein Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version im Manifest prüfen
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(python -c "import json;print(json.load(open('custom_components/facade_conductor/manifest.json'))['version'])")
+          test "$tag" = "$manifest" || { echo "Tag $tag passt nicht zu manifest.json $manifest"; exit 1; }
+      - uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true

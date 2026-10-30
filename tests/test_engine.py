@@ -4,10 +4,23 @@ Positionen stammen aus einer bestehenden Rollladen-Automation, die
 Sonnenwinkel gelten für Norddeutschland Mitte Juli.
 """
 
+import importlib.util
+import sys
 import unittest
+from pathlib import Path
 
-from custom_components.facade_conductor.engine import (
+# engine.py direkt laden: das Paket selbst braucht Home Assistant, die Logik nicht
+_path = Path(__file__).parents[1] / "custom_components" / "facade_conductor" / "engine.py"
+_spec = importlib.util.spec_from_file_location("facade_engine", _path)
+_engine = importlib.util.module_from_spec(_spec)
+sys.modules["facade_engine"] = _engine
+_spec.loader.exec_module(_engine)
+
+from facade_engine import (  # noqa: E402
+    CommandLog,
     Decision,
+    direction_range,
+    phase_for,
     House,
     Hysteresis,
     Phase,
@@ -134,6 +147,35 @@ class Werkzeuge(unittest.TestCase):
         h = Hysteresis(2500, 4000)
         self.assertEqual([h.update(v) for v in (6000, 3000, 2400, 3500, 3900, 4100)],
                          [False, False, True, True, True, False])
+
+    def test_himmelsrichtung(self):
+        self.assertEqual(direction_range("e"), (45, 135))
+        self.assertEqual(direction_range("n"), (315, 45))
+        self.assertTrue(in_range(10, *direction_range("n")))
+
+    def test_tagesphase(self):
+        self.assertEqual(phase_for(23.5, 23, 7, dark=True), Phase.NIGHT)
+        self.assertEqual(phase_for(6.9, 23, 7, dark=False), Phase.NIGHT)
+        self.assertEqual(phase_for(7.5, 23, 7, dark=True), Phase.NIGHT)  # Wintermorgen bleibt zu
+        self.assertEqual(phase_for(7.5, 23, 7, dark=False), Phase.DAY)
+        self.assertEqual(phase_for(17, 23, 7, dark=True), Phase.DUSK)
+        self.assertEqual(phase_for(17, 23, 7, dark=False), Phase.DAY)
+
+    def test_handbetrieb_erkennen(self):
+        log = CommandLog(grace=120)
+        self.assertTrue(log.is_manual("c", 100, 50, now=10))
+        log.sent("c", now=10)
+        self.assertFalse(log.is_manual("c", 100, 25, now=60))  # eigene Fahrt
+        self.assertTrue(log.is_manual("c", 25, 60, now=200))  # später von Hand
+        self.assertFalse(log.is_manual("c", 25, 26, now=300))  # Messrauschen
+        self.assertFalse(log.is_manual("c", None, 26, now=300))  # Neustart
+
+    def test_waehrend_der_fahrt_nicht_nachsenden(self):
+        log = CommandLog(grace=120)
+        log.sent("c", now=0, target=25)
+        self.assertTrue(log.in_flight("c", 25, now=30))
+        self.assertFalse(log.in_flight("c", 70, now=30))  # neues Ziel geht sofort raus
+        self.assertFalse(log.in_flight("c", 25, now=130))  # nicht angekommen: nachsenden
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))

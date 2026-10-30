@@ -1,0 +1,218 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Haus einrichten",
+        "description": "Grundeinstellungen für alle Räume. Räume fügst du danach einzeln hinzu.",
+        "data": {
+          "weather": "Wetter für die Tagesprognose",
+          "hot_temperature": "Heißer Tag ab",
+          "lux_sensor": "Helligkeit in Lux",
+          "lux_dark": "Dunkel unter",
+          "lux_bright": "Wieder hell über",
+          "night_start": "Nachtruhe ab",
+          "night_end": "Nachtruhe bis",
+          "rest_minutes": "Ruhe nach einer Fahrt"
+        },
+        "data_description": {
+          "weather": "Ohne Wetter gibt es keinen Hitzeschutz.",
+          "hot_temperature": "Liegt der Tageshöchstwert darüber, gilt Hitzeschutz.",
+          "lux_sensor": "Optional. Ohne Sensor zählt der Sonnenstand.",
+          "lux_bright": "Zwei Schwellen verhindern Hin und Her bei Wolken.",
+          "rest_minutes": "So lange fährt ein Raum nach einer automatischen Fahrt nicht erneut. Sicherheit, Hand und Fenster wirken sofort."
+        },
+        "sections": {
+          "positions": {
+            "name": "Standardpositionen",
+            "description": "Gelten für alle Räume, solange ein Raum nichts anderes festlegt. 0 % ist zu, 100 % ist offen.",
+            "data": {
+              "day": "Tag",
+              "dusk": "Dämmerung",
+              "night": "Nacht",
+              "tilted": "Fenster gekippt",
+              "open": "Fenster ganz offen",
+              "shade": "Hitzeschutz"
+            }
+          }
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Facade Conductor ist bereits eingerichtet. Räume fügst du über „Raum hinzufügen“ hinzu."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Haus",
+        "data": {
+          "weather": "Wetter für die Tagesprognose",
+          "hot_temperature": "Heißer Tag ab",
+          "lux_sensor": "Helligkeit in Lux",
+          "lux_dark": "Dunkel unter",
+          "lux_bright": "Wieder hell über",
+          "night_start": "Nachtruhe ab",
+          "night_end": "Nachtruhe bis",
+          "rest_minutes": "Ruhe nach einer Fahrt"
+        },
+        "sections": {
+          "positions": {
+            "name": "Standardpositionen",
+            "data": {
+              "day": "Tag",
+              "dusk": "Dämmerung",
+              "night": "Nacht",
+              "tilted": "Fenster gekippt",
+              "open": "Fenster ganz offen",
+              "shade": "Hitzeschutz"
+            }
+          }
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "room": {
+      "initiate_flow": {
+        "user": "Raum hinzufügen"
+      },
+      "entry_type": "Raum",
+      "step": {
+        "user": {
+          "title": "Raum hinzufügen",
+          "description": "Wähle den Bereich. Rollläden und Fensterkontakte darin werden vorgeschlagen.",
+          "data": {
+            "area": "Bereich"
+          }
+        },
+        "room": {
+          "title": "Raum {area}",
+          "description": "Prüfe die gefundenen Geräte. Leere Positionen nehmen den Standard des Hauses.",
+          "data": {
+            "covers": "Rollläden und Vorhänge",
+            "window_sensor": "Fensterkontakt",
+            "window_means": "Kontakt offen bedeutet",
+            "direction": "Fenster zeigt nach",
+            "sleep_sensor": "Schlafen erkennen"
+          },
+          "data_description": {
+            "covers": "Mehrere fahren im Gleichlauf.",
+            "window_means": "Ein einfacher Kontakt kennt nur offen oder zu.",
+            "direction": "Für den Hitzeschutz. Keine Angabe heißt kein Hitzeschutz.",
+            "sleep_sensor": "Optional. Solange er an ist, bleibt der Raum dunkel."
+          },
+          "sections": {
+            "positions": {
+              "name": "Eigene Positionen",
+              "description": "Nur eintragen, was hier anders sein soll.",
+              "data": {
+                "day": "Tag",
+                "dusk": "Dämmerung",
+                "night": "Nacht",
+                "tilted": "Fenster gekippt",
+                "open": "Fenster ganz offen",
+                "shade": "Hitzeschutz"
+              }
+            },
+            "advanced": {
+              "name": "Erweitert",
+              "description": "Pause für den Schlafsensor, etwa wenn ein offen verbundener Raum mittags trotzdem öffnen soll.",
+              "data": {
+                "sleep_pause_start": "Schlafen gilt hier nicht ab",
+                "sleep_pause_end": "bis"
+              }
+            }
+          }
+        },
+        "reconfigure": {
+          "title": "Raum ändern",
+          "data": {
+            "covers": "Rollläden und Vorhänge",
+            "window_sensor": "Fensterkontakt",
+            "window_means": "Kontakt offen bedeutet",
+            "direction": "Fenster zeigt nach",
+            "sleep_sensor": "Schlafen erkennen"
+          },
+          "sections": {
+            "positions": {
+              "name": "Eigene Positionen",
+              "data": {
+                "day": "Tag",
+                "dusk": "Dämmerung",
+                "night": "Nacht",
+                "tilted": "Fenster gekippt",
+                "open": "Fenster ganz offen",
+                "shade": "Hitzeschutz"
+              }
+            },
+            "advanced": {
+              "name": "Erweitert",
+              "data": {
+                "sleep_pause_start": "Schlafen gilt hier nicht ab",
+                "sleep_pause_end": "bis"
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "no_covers": "Bitte mindestens einen Rollladen oder Vorhang wählen."
+      },
+      "abort": {
+        "reconfigure_successful": "Raum gespeichert."
+      }
+    }
+  },
+  "selector": {
+    "window_means": {
+      "options": {
+        "tilted": "gekippt",
+        "open": "ganz offen"
+      }
+    },
+    "direction": {
+      "options": {
+        "none": "keine Angabe",
+        "n": "Nord",
+        "ne": "Nordost",
+        "e": "Ost",
+        "se": "Südost",
+        "s": "Süd",
+        "sw": "Südwest",
+        "w": "West",
+        "nw": "Nordwest"
+      }
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Betriebsart",
+        "state": {
+          "off": "Aus",
+          "dry_run": "Probelauf",
+          "auto": "Automatik"
+        }
+      }
+    },
+    "sensor": {
+      "reason": {
+        "name": "Grund",
+        "state": {
+          "schedule": "Tagesablauf",
+          "evening_cooling": "Abendkühlung",
+          "heat_protection": "Hitzeschutz",
+          "sleep": "Schlafen",
+          "situation": "Situation",
+          "window_tilted": "Fenster gekippt",
+          "window_open": "Fenster offen",
+          "manual": "Handbetrieb",
+          "safety": "Sicherheit"
+        }
+      },
+      "target_position": {
+        "name": "Zielposition"
+      }
+    }
+  }
+}

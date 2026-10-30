@@ -1,0 +1,14 @@
+{
+  "domain": "facade_conductor",
+  "name": "Facade Conductor",
+  "after_dependencies": ["weather"],
+  "codeowners": ["@Mcsaxo1990"],
+  "config_flow": true,
+  "dependencies": ["sun"],
+  "documentation": "https://github.com/SekaiMedia/FaCo",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/SekaiMedia/FaCo/issues",
+  "requirements": [],
+  "version": "0.1.0-beta.1"
+}
