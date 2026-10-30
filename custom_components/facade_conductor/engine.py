@@ -161,6 +161,16 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
     return Decision(pos, reason)
 
 
+def sleep_on(state: str | None, watts: float | None) -> bool:
+    """Zeigt der Schlaf-Geber Schlafen an? Schalter und Sensoren mit „on“, Leistung über der Schwelle."""
+    if watts is None:
+        return state == "on"
+    try:
+        return float(state) > watts
+    except (TypeError, ValueError):
+        return False  # nicht verfügbar zählt als wach
+
+
 def still_asleep(on: bool, off_for: float | None, delay: float) -> bool:
     """Kurz aufstehen weckt den Raum nicht: aus zählt erst nach der Verzögerung als wach."""
     return on or (off_for is not None and off_for < delay)

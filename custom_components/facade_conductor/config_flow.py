@@ -302,7 +302,7 @@ class RoomSubentryFlow(ConfigSubentryFlow):
         pause = v.get(CONF_ADVANCED) or {}
         schema = vol.Schema(
             {
-                _optional(CONF_SLEEP_SENSOR, v): _entity(["binary_sensor", "input_boolean"]),
+                _optional(CONF_SLEEP_SENSOR, v): _entity(["binary_sensor", "input_boolean", "sensor", "switch"]),
                 _optional(CONF_SLEEP_PAUSE_START, pause): TIME,
                 _optional(CONF_SLEEP_PAUSE_END, pause): TIME,
             }

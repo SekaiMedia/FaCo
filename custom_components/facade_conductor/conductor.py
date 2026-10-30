@@ -36,11 +36,13 @@ from .const import (
     CONF_SLEEP_PAUSE_START,
     CONF_SLEEP_SENSOR,
     CONF_SLEEP_WAKE_MINUTES,
+    CONF_SLEEP_WATTS,
     CONF_WEATHER,
     CONF_WINDOW_MEANS,
     CONF_WINDOW_SENSOR,
     DEFAULT_POSITIONS,
     DEFAULTS,
+    DEFAULT_SLEEP_WATTS,
     EVALUATE_INTERVAL_SECONDS,
     FORECAST_INTERVAL_MINUTES,
     MODE_AUTO,
@@ -62,6 +64,7 @@ from .engine import (
     direction_range,
     may_move,
     phase_for,
+    sleep_on,
     still_asleep,
 )
 
@@ -86,6 +89,8 @@ class Room:
     window_means: Window
     sleep_sensor: str | None
     wake_delay: float = 0
+    sleep_watts: float | None = None  # gesetzt, wenn der Schlaf-Geber ein Leistungssensor ist
+    last_asleep: float | None = None
     decision: Decision | None = None
     state: RoomState | None = None
     manual: int | None = None
@@ -134,6 +139,9 @@ class Conductor:
             window_means=Window.OPEN if data.get(CONF_WINDOW_MEANS) == "open" else Window.TILTED,
             sleep_sensor=data.get(CONF_SLEEP_SENSOR),
             wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
+            sleep_watts=float(data.get(CONF_SLEEP_WATTS) or DEFAULT_SLEEP_WATTS)
+            if (data.get(CONF_SLEEP_SENSOR) or "").startswith("sensor.")
+            else None,
         )
 
     # Lebenszyklus
@@ -249,11 +257,13 @@ class Conductor:
 
     def _asleep(self, room: Room) -> bool:
         state = self.hass.states.get(room.sleep_sensor) if room.sleep_sensor else None
-        if state is None:
-            return False
-        on = state.state == STATE_ON
-        # der Minutentakt prüft erneut, sobald die Pause vorbei ist
-        off_for = None if on else (dt_util.utcnow() - state.last_changed).total_seconds()
+        on = sleep_on(state.state if state else None, room.sleep_watts)
+        # Aufstehpause selbst mitzählen: ein Leistungssensor ändert seinen Wert ständig,
+        # sein last_changed sagt nichts darüber, seit wann niemand mehr schläft
+        now = time.monotonic()
+        if on:
+            room.last_asleep = now
+        off_for = None if on or room.last_asleep is None else now - room.last_asleep
         return still_asleep(on, off_for, room.wake_delay)
 
     def _current(self, room: Room) -> dict[str, int]:

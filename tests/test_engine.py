@@ -34,6 +34,7 @@ from facade_engine import (  # noqa: E402
     in_range,
     may_move,
     situation_active,
+    sleep_on,
     still_asleep,
 )
 
@@ -184,6 +185,15 @@ class Werkzeuge(unittest.TestCase):
         self.assertTrue(still_asleep(False, 120, 600))  # kurz auf Klo
         self.assertFalse(still_asleep(False, 600, 600))  # Pause vorbei
         self.assertFalse(still_asleep(False, None, 600))  # Sensor fehlt
+
+    def test_schlafen_ueber_leistung(self):
+        self.assertTrue(sleep_on("on", None))
+        self.assertFalse(sleep_on("off", None))
+        self.assertTrue(sleep_on("35.2", 5))  # CPAP läuft
+        self.assertFalse(sleep_on("1.1", 5))  # Standby
+        self.assertFalse(sleep_on("5", 5))  # genau auf der Schwelle noch wach
+        self.assertFalse(sleep_on("unavailable", 5))
+        self.assertFalse(sleep_on(None, 5))
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))
