@@ -72,4 +72,5 @@ are shown, nothing moves until you switch the operating mode to automatic.
 
 ---
 
-Eine Integration von HiiragiSensei @ [SekaiMedia](https://sekaimedia.de)
+Eine Integration von HiiragiSensei @ [SekaiMedia](https://sekaimedia.de) ·
+Lizenz: [Apache 2.0](LICENSE)

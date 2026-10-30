@@ -2,6 +2,7 @@
   "domain": "facade_conductor",
   "name": "Facade Conductor",
   "after_dependencies": ["weather"],
+  "categories": ["blinds_curtains"],
   "codeowners": ["@Mcsaxo1990"],
   "config_flow": true,
   "dependencies": ["sun"],
