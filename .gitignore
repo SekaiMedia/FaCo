@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# Arbeitsregeln für KI-Sitzungen, enthalten lokale Pfade
+CLAUDE.md
