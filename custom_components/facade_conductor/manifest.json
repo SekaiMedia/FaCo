@@ -1,6 +1,6 @@
 {
   "domain": "facade_conductor",
-  "name": "Facade Conductor",
+  "name": "Facade Conductor (FaCo)",
   "after_dependencies": ["weather"],
   "categories": ["blinds_curtains"],
   "codeowners": ["@Mcsaxo1990"],

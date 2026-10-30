@@ -2,71 +2,75 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up the house",
-        "description": "Basic settings for all rooms. Add rooms one by one afterwards.",
+        "title": "Set up Facade Conductor",
+        "description": "That is all you need to start. Everything else is under Configure later, rooms are added with Add room.",
         "data": {
-          "weather": "Weather for the daily forecast",
-          "hot_temperature": "Hot day from",
-          "lux_sensor": "Brightness in lux",
-          "lux_dark": "Dark below",
-          "lux_bright": "Bright again above",
-          "night_start": "Quiet hours from",
-          "night_end": "Quiet hours until",
-          "rest_minutes": "Rest after a move"
+          "weather": "Weather for heat protection"
         },
         "data_description": {
-          "weather": "Without weather there is no heat protection.",
-          "hot_temperature": "If the daily high is above this, heat protection applies.",
-          "lux_sensor": "Optional. Without a sensor the sun position is used.",
-          "lux_bright": "Two thresholds prevent back and forth with passing clouds.",
-          "rest_minutes": "A room does not move again for this long after an automatic move. Safety, manual and windows act immediately."
-        },
-        "sections": {
-          "positions": {
-            "name": "Default positions",
-            "description": "Apply to all rooms unless a room sets its own. 0 % is closed, 100 % is open.",
-            "data": {
-              "day": "Day",
-              "dusk": "Dusk",
-              "night": "Night",
-              "tilted": "Window tilted",
-              "open": "Window fully open",
-              "shade": "Heat protection"
-            }
-          }
+          "weather": "Optional. Without weather there is no heat protection."
         }
       }
     },
     "abort": {
-      "already_configured": "Facade Conductor is already set up. Add rooms with \"Add room\"."
+      "already_configured": "Facade Conductor is already set up. Add rooms with Add room."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "House",
+        "title": "Settings",
+        "menu_options": {
+          "heat": "Heat protection",
+          "daylight": "Daylight",
+          "night": "Quiet hours",
+          "positions": "Default positions"
+        }
+      },
+      "heat": {
+        "title": "Heat protection",
         "data": {
-          "weather": "Weather for the daily forecast",
-          "hot_temperature": "Hot day from",
-          "lux_sensor": "Brightness in lux",
+          "weather": "Weather",
+          "hot_temperature": "Hot day from"
+        },
+        "data_description": {
+          "weather": "Without weather there is no heat protection.",
+          "hot_temperature": "If the daily high is above this, heat protection applies."
+        }
+      },
+      "daylight": {
+        "title": "Daylight",
+        "data": {
+          "lux_sensor": "Outdoor daylight (lux)",
           "lux_dark": "Dark below",
-          "lux_bright": "Bright again above",
+          "lux_bright": "Bright again above"
+        },
+        "data_description": {
+          "lux_sensor": "Sensor outdoors, for example on a weather station. Not an indoor sensor. Without a sensor the sun position is used.",
+          "lux_bright": "Two thresholds prevent back and forth with passing clouds."
+        }
+      },
+      "night": {
+        "title": "Quiet hours",
+        "data": {
           "night_start": "Quiet hours from",
           "night_end": "Quiet hours until",
           "rest_minutes": "Rest after a move"
         },
-        "sections": {
-          "positions": {
-            "name": "Default positions",
-            "data": {
-              "day": "Day",
-              "dusk": "Dusk",
-              "night": "Night",
-              "tilted": "Window tilted",
-              "open": "Window fully open",
-              "shade": "Heat protection"
-            }
-          }
+        "data_description": {
+          "rest_minutes": "A room does not move again for this long after an automatic move. Safety, manual and windows act immediately."
+        }
+      },
+      "positions": {
+        "title": "Default positions",
+        "description": "Apply to all rooms unless a room sets its own. 0 % is closed, 100 % is open.",
+        "data": {
+          "day": "Day",
+          "dusk": "Dusk",
+          "night": "Night",
+          "tilted": "Window tilted",
+          "open": "Window fully open",
+          "shade": "Heat protection"
         }
       }
     }
@@ -74,7 +78,8 @@
   "config_subentries": {
     "room": {
       "initiate_flow": {
-        "user": "Add room"
+        "user": "Add room",
+        "reconfigure": "Configure room"
       },
       "entry_type": "Room",
       "step": {
@@ -87,71 +92,77 @@
         },
         "room": {
           "title": "Room {area}",
-          "description": "Check the devices found. Empty positions use the house defaults.",
+          "description": "Check the suggestions. Sleep, own positions and more are set later with Configure on the room.",
           "data": {
             "covers": "Shutters and curtains",
             "window_sensor": "Window contact",
-            "window_means": "Contact open means",
-            "direction": "Window faces",
-            "sleep_sensor": "Detect sleep"
+            "direction": "Window faces"
           },
           "data_description": {
             "covers": "Several move in sync.",
-            "window_means": "A simple contact only knows open or closed.",
-            "direction": "Used for heat protection. No direction means no heat protection.",
-            "sleep_sensor": "Optional. While it is on, the room stays dark."
-          },
-          "sections": {
-            "positions": {
-              "name": "Own positions",
-              "description": "Only fill in what differs here.",
-              "data": {
-                "day": "Day",
-                "dusk": "Dusk",
-                "night": "Night",
-                "tilted": "Window tilted",
-                "open": "Window fully open",
-                "shade": "Heat protection"
-              }
-            },
-            "advanced": {
-              "name": "Advanced",
-              "description": "Pause for the sleep sensor, for example when an open-plan room should still open at noon.",
-              "data": {
-                "sleep_pause_start": "Sleep does not apply here from",
-                "sleep_pause_end": "until"
-              }
-            }
+            "direction": "Used for heat protection. Not set means no heat protection."
           }
         },
         "reconfigure": {
-          "title": "Change room",
+          "title": "Configure room",
+          "menu_options": {
+            "devices": "Shutters and curtains",
+            "window": "Window",
+            "sun": "Sun and heat protection",
+            "sleep": "Sleep",
+            "own_positions": "Own positions"
+          }
+        },
+        "devices": {
+          "title": "Shutters and curtains",
           "data": {
-            "covers": "Shutters and curtains",
-            "window_sensor": "Window contact",
-            "window_means": "Contact open means",
-            "direction": "Window faces",
-            "sleep_sensor": "Detect sleep"
+            "covers": "Shutters and curtains"
           },
-          "sections": {
-            "positions": {
-              "name": "Own positions",
-              "data": {
-                "day": "Day",
-                "dusk": "Dusk",
-                "night": "Night",
-                "tilted": "Window tilted",
-                "open": "Window fully open",
-                "shade": "Heat protection"
-              }
-            },
-            "advanced": {
-              "name": "Advanced",
-              "data": {
-                "sleep_pause_start": "Sleep does not apply here from",
-                "sleep_pause_end": "until"
-              }
-            }
+          "data_description": {
+            "covers": "Several move in sync."
+          }
+        },
+        "window": {
+          "title": "Window",
+          "data": {
+            "window_sensor": "Window contact",
+            "window_means": "Contact open means"
+          },
+          "data_description": {
+            "window_means": "A simple contact only knows open or closed."
+          }
+        },
+        "sun": {
+          "title": "Sun and heat protection",
+          "data": {
+            "direction": "Window faces"
+          },
+          "data_description": {
+            "direction": "Not set means no heat protection in this room."
+          }
+        },
+        "sleep": {
+          "title": "Sleep",
+          "data": {
+            "sleep_sensor": "Detect sleep",
+            "sleep_pause_start": "Sleep does not apply here from",
+            "sleep_pause_end": "until"
+          },
+          "data_description": {
+            "sleep_sensor": "While it is on, the room stays dark.",
+            "sleep_pause_start": "Optional, for example when an open-plan room should still open at noon."
+          }
+        },
+        "own_positions": {
+          "title": "Own positions",
+          "description": "Only fill in what differs here. Empty fields use the house defaults.",
+          "data": {
+            "day": "Day",
+            "dusk": "Dusk",
+            "night": "Night",
+            "tilted": "Window tilted",
+            "open": "Window fully open",
+            "shade": "Heat protection"
           }
         }
       },
@@ -159,7 +170,7 @@
         "no_covers": "Please choose at least one shutter or curtain."
       },
       "abort": {
-        "reconfigure_successful": "Room saved."
+        "reconfigure_successful": "Saved."
       }
     }
   },
