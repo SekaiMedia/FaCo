@@ -161,6 +161,11 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
     return Decision(pos, reason)
 
 
+def still_asleep(on: bool, off_for: float | None, delay: float) -> bool:
+    """Kurz aufstehen weckt den Raum nicht: aus zählt erst nach der Verzögerung als wach."""
+    return on or (off_for is not None and off_for < delay)
+
+
 def may_move(decision: Decision, last_auto_move: float | None, now: float, rest: float = 1200) -> bool:
     """Ruhe nach einer automatischen Fahrt. Sicherheit, Hand und Fenster wirken sofort."""
     if decision.level <= 3 or last_auto_move is None:

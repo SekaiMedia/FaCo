@@ -5,6 +5,7 @@ const STRINGS = await fetch(new URL("./strings.json", import.meta.url))
   .then((r) => r.json())
   .catch(() => ({}));
 
+const TABS = ["overview", "rooms", "schedule", "windows", "weather", "general"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade"];
@@ -44,6 +45,10 @@ class FacadeConductorPanel extends HTMLElement {
     else if (!this._timer) this._timer = setTimeout(() => ((this._timer = null), this._load()), 2000);
   }
 
+  set panel(value) {
+    this._version = value?.config?.version;
+  }
+
   set narrow(value) {
     this._narrow = value;
     if (this._menu) this._menu.narrow = value;
@@ -52,7 +57,12 @@ class FacadeConductorPanel extends HTMLElement {
   _t(key, vars = {}) {
     const lang = (this._hass?.locale?.language || this._hass?.language || "en").startsWith("de") ? "de" : "en";
     const text = STRINGS[lang]?.[key] ?? STRINGS.en?.[key] ?? key;
-    return text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+    return text.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+  }
+
+  // Satz mit Eingabefeldern an den Platzhaltern, etwa „Abends auf {pos} %“
+  _sentence(key, parts) {
+    return esc(this._t(key)).replace(/\{(\w+)\}/g, (_, k) => parts[k] ?? "");
   }
 
   _name(entityId) {
@@ -121,9 +131,7 @@ class FacadeConductorPanel extends HTMLElement {
       ? `<div class="card">${esc(this._error)}</div>`
       : !info
         ? ""
-        : this._tab === "overview"
-          ? this._overview(info)
-          : this._rooms(info);
+        : this[`_${this._tab}`](info);
     root.innerHTML = `
       <style>${STYLE}</style>
       <div class="toolbar">
@@ -132,13 +140,11 @@ class FacadeConductorPanel extends HTMLElement {
         ${info ? this._modes(info) : ""}
       </div>
       <div class="tabs" role="tablist">
-        ${["overview", "rooms"]
-          .map(
+        ${TABS.map(
             (tab) =>
               `<button role="tab" data-tab="${tab}" aria-selected="${this._tab === tab}">${esc(this._t(`tab_${tab}`))}</button>`,
           )
           .join("")}
-        <a class="more" href="/config/integrations/integration/facade_conductor">${esc(this._t("house_settings"))}</a>
       </div>
       <div class="content">${body}</div>
       ${this._toast ? `<div class="toast" role="status">${esc(this._toast)}</div>` : ""}`;
@@ -164,6 +170,94 @@ class FacadeConductorPanel extends HTMLElement {
     return this._hass.localize(`component.facade_conductor.entity.sensor.reason.state.${room.reason}`) || room.reason;
   }
 
+  _houseInput(key, attrs) {
+    const value = this._info.house[key] ?? "";
+    return `<input id="h-${key}" data-house="${key}" ${attrs} value="${esc(attrs.includes("time") ? String(value).slice(0, 5) : value)}">`;
+  }
+
+  _housePos(key) {
+    return `<input id="hp-${key}" class="pct" type="number" min="0" max="100" step="1" data-hpos="${key}"
+      aria-label="${esc(this._t(`pos_${key}`))}" value="${this._info.positions[key]}">`;
+  }
+
+  _schedule() {
+    const time = (key) => this._houseInput(key, `type="time" aria-label="${esc(this._t(key))}"`);
+    return `<div class="card">
+        <p class="sentence">${this._sentence("schedule_morning", { time: time("night_end"), pos: this._housePos("day") })}</p>
+        <p class="sentence">${this._sentence("schedule_evening", { pos: this._housePos("dusk") })}</p>
+        <p class="sentence">${this._sentence("schedule_night", { time: time("night_start"), pos: this._housePos("night") })}</p>
+      </div>
+      <p class="muted">${esc(this._t("schedule_hint"))}</p>`;
+  }
+
+  _windows(info) {
+    const rows = info.rooms
+      .filter((r) => r.data.window_sensor)
+      .map(
+        (r) =>
+          `<div class="row"><span>${esc(r.name)} · ${esc(this._name(r.data.window_sensor))}</span>
+          <span class="muted">${esc(this._stateText(r.data.window_sensor))}, ${esc(this._t("counts_as", { m: this._t(`means_${r.data.window_means || "tilted"}`) }))}</span></div>`,
+      )
+      .join("");
+    return `<div class="card">
+        <p class="sentence">${this._sentence("windows_tilted", { pos: this._housePos("tilted") })}</p>
+        <p class="sentence">${this._sentence("windows_open", { pos: this._housePos("open") })}</p>
+        <p class="muted">${esc(this._t("windows_open_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("windows_list"))}</h3>
+        ${rows || `<p class="muted">${esc(this._t("no_contact"))}</p>`}
+        <p class="muted">${esc(this._t("windows_room_hint"))}</p>
+      </div>`;
+  }
+
+  _weather(info) {
+    const all = Object.keys(this._hass.states);
+    const weathers = all.filter((id) => id.startsWith("weather."));
+    const lux = all.filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "illuminance");
+    const num = (key, min, max, step) => this._houseInput(key, `type="number" min="${min}" max="${max}" step="${step}"`);
+    return `<div class="card">
+        <h3>${esc(this._t("heat"))}</h3>
+        <label class="field">${esc(this._t("weather_entity"))}
+          <select id="h-weather" data-house="weather">${this._options(weathers, info.house.weather, this._t("none"))}</select></label>
+        <div class="positions">
+          <label class="field">${esc(this._t("hot_temperature"))} ${num("hot_temperature", 10, 40, 0.5)}</label>
+          <label class="field">${esc(this._t("pos_shade"))} ${this._housePos("shade")}</label>
+        </div>
+        <p class="muted">${esc(this._t("heat_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("daylight"))}</h3>
+        <label class="field">${esc(this._t("lux_sensor"))}
+          <select id="h-lux_sensor" data-house="lux_sensor">${this._options(lux, info.house.lux_sensor, this._t("none"))}</select></label>
+        <div class="positions">
+          <label class="field">${esc(this._t("lux_dark"))} ${num("lux_dark", 0, 100000, 50)}</label>
+          <label class="field">${esc(this._t("lux_bright"))} ${num("lux_bright", 0, 100000, 50)}</label>
+        </div>
+        <p class="muted">${esc(this._t("daylight_hint"))}</p>
+      </div>
+      <p class="muted">${esc(this._t("rain_wind_later"))}</p>`;
+  }
+
+  _general() {
+    return `<div class="card">
+        <h3>${esc(this._t("mode"))}</h3>
+        ${MODES.map((m) => `<p class="muted"><b>${esc(this._t(`mode_${m}`))}:</b> ${esc(this._t(`mode_${m}_text`))}</p>`).join("")}
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("behavior"))}</h3>
+        <label class="field">${esc(this._t("rest_minutes"))}
+          ${this._houseInput("rest_minutes", 'type="number" min="0" max="240" step="1"')}</label>
+        <p class="muted">${esc(this._t("behavior_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("about"))}</h3>
+        <p class="muted">${esc(this._t("version", { v: this._version || "?" }))} ·
+          <a href="https://github.com/SekaiMedia/FaCo" target="_blank" rel="noreferrer">GitHub</a> ·
+          <a href="https://sekaimedia.de" target="_blank" rel="noreferrer">SekaiMedia</a></p>
+      </div>`;
+  }
+
   _overview(info) {
     const hint =
       info.mode === "auto" ? "" : `<div class="hint">${esc(this._t(info.mode === "off" ? "hint_off" : "hint_dry_run"))}</div>`;
@@ -176,12 +270,17 @@ class FacadeConductorPanel extends HTMLElement {
           ? `<span class="chip" style="--c:${REASON_COLOR[r.reason] || "var(--secondary-text-color)"}">${esc(this._reasonText(r))}</span>`
           : `<span class="muted">${esc(this._t("waiting"))}</span>`;
         const window = r.data.window_sensor ? this._stateText(r.data.window_sensor) : this._t("no_contact");
-        return `<button class="card room-card" data-open="${esc(r.id)}">
+        const resume =
+          r.reason === "manual" && r.manual_entity
+            ? `<button class="btn" data-resume="${esc(r.manual_entity)}">${esc(this._t("resume"))}</button>`
+            : "";
+        return `<div class="card">
           <div class="row"><h2>${esc(r.name)}</h2><span class="big">${esc(pos)}</span></div>
           <div class="bar"><span style="width:${Number(r.position) || 0}%"></span></div>
           <div class="row">${reason}<span class="muted">${esc(this._t("target"))} ${esc(pct(r.target))}</span></div>
           <div class="muted">${esc(this._t("window"))}: ${esc(window)}</div>
-        </button>`;
+          <div class="row start">${resume}<button class="btn2" data-open="${esc(r.id)}">${esc(this._t("settings"))}</button></div>
+        </div>`;
       })
       .join("");
     return `${hint}${phase}<div class="grid">${cards}</div>`;
@@ -279,6 +378,10 @@ class FacadeConductorPanel extends HTMLElement {
         <label class="field">${esc(this._t("sleep_sensor"))}
           <select id="f-sleep" data-field="sleep_sensor">${this._options(sleepers, d.sleep_sensor, this._t("none"))}</select></label>
         <p class="muted">${esc(this._t("sleep_hint"))}</p>
+        <label class="field">${esc(this._t("wake_minutes"))}
+          <input id="f-wake" type="number" min="0" max="120" step="1" data-field="sleep_wake_minutes"
+            value="${esc(d.sleep_wake_minutes ?? "")}" placeholder="${esc(this._t("wake_now"))}"></label>
+        <p class="muted">${esc(this._t("wake_hint"))}</p>
         <div class="row start">
           <label class="field">${esc(this._t("pause_start"))}
             <input id="f-pause-start" type="time" data-pause="sleep_pause_start" value="${esc((pause.sleep_pause_start || "").slice(0, 5))}"></label>
@@ -308,6 +411,13 @@ class FacadeConductorPanel extends HTMLElement {
     root.querySelectorAll("[data-tab]").forEach((el) =>
       el.addEventListener("click", () => ((this._tab = el.dataset.tab), this._render())),
     );
+    root.querySelectorAll("[data-resume]").forEach((el) =>
+      el.addEventListener("click", async () => {
+        await this._hass.callService("switch", "turn_off", { entity_id: el.dataset.resume });
+        this._flash(this._t("saved"));
+        setTimeout(() => this._load(), 2500);
+      }),
+    );
     root.querySelectorAll("[data-open]").forEach((el) =>
       el.addEventListener("click", () => ((this._tab = "rooms"), (this._room = el.dataset.open), this._render())),
     );
@@ -334,6 +444,23 @@ class FacadeConductorPanel extends HTMLElement {
       if (room && confirm(this._t("confirm_remove", { name: room.name })))
         this._call({ type: "facade_conductor/room/remove", room_id: room.id });
     });
+
+    const saveHouse = (changes) => {
+      const { positions, ...rest } = changes;
+      Object.assign(this._info.house, rest);
+      if (positions) Object.assign(this._info.positions, positions);
+      return this._call({ type: "facade_conductor/house/update", changes });
+    };
+    root.querySelectorAll("[data-house]").forEach((el) =>
+      el.addEventListener("change", () => {
+        if (el.tagName === "SELECT") return saveHouse({ [el.dataset.house]: el.value || null });
+        if (el.value === "") return; // Pflichtfeld: leer heißt nichts ändern
+        saveHouse({ [el.dataset.house]: el.type === "time" ? `${el.value}:00` : Number(el.value) });
+      }),
+    );
+    root.querySelectorAll("[data-hpos]").forEach((el) =>
+      el.addEventListener("change", () => el.value !== "" && saveHouse({ positions: { [el.dataset.hpos]: Number(el.value) } })),
+    );
 
     const save = (changes) => {
       // sofort übernehmen, sonst springt das Feld bis zum Nachladen auf den alten Wert
@@ -380,13 +507,16 @@ const STYLE = `
   .tabs button { font: inherit; font-size: 14px; font-weight: 500; min-height: 48px; padding: 0 16px; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--secondary-text-color); cursor: pointer; }
   .tabs button[aria-selected="true"] { color: var(--primary-color); border-bottom-color: var(--primary-color); }
   .more { margin-left: auto; font-size: 14px; color: var(--primary-color); padding: 12px 0; }
-  .content { padding: 16px; max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+  .content { padding: 16px; max-width: 1200px; display: flex; flex-direction: column; gap: 16px; }
   .card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius, 12px); border: 1px solid var(--divider-color); padding: 16px; display: flex; flex-direction: column; gap: 12px; color: inherit; font: inherit; text-align: left; }
   h2 { margin: 0; font-size: 18px; font-weight: 500; } h3 { margin: 0; font-size: 16px; font-weight: 500; }
+  .sentence { margin: 0; font-size: 16px; line-height: 2.4; }
+  .sentence input { margin: 0 4px; }
+  input.pct { width: 72px; }
   .muted { color: var(--secondary-text-color); font-size: 14px; margin: 0; }
   .hint { background: rgba(255, 166, 0, .15); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-  .room-card { cursor: pointer; }
+  .btn2 { font: inherit; font-size: 14px; font-weight: 500; min-height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--divider-color); background: none; color: var(--primary-text-color); cursor: pointer; }
   .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
   .row.start { justify-content: flex-start; }
   .big { font-size: 24px; }

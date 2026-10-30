@@ -34,6 +34,7 @@ from facade_engine import (  # noqa: E402
     in_range,
     may_move,
     situation_active,
+    still_asleep,
 )
 
 BUERO = RoomConfig(positions=Positions(shade=75), sun_azimuth=(120, 210))
@@ -176,6 +177,13 @@ class Werkzeuge(unittest.TestCase):
         self.assertTrue(log.in_flight("c", 25, now=30))
         self.assertFalse(log.in_flight("c", 70, now=30))  # neues Ziel geht sofort raus
         self.assertFalse(log.in_flight("c", 25, now=130))  # nicht angekommen: nachsenden
+
+    def test_aufstehpause(self):
+        self.assertTrue(still_asleep(True, None, 0))
+        self.assertFalse(still_asleep(False, 30, 0))  # ohne Pause sofort wach
+        self.assertTrue(still_asleep(False, 120, 600))  # kurz auf Klo
+        self.assertFalse(still_asleep(False, 600, 600))  # Pause vorbei
+        self.assertFalse(still_asleep(False, None, 600))  # Sensor fehlt
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))

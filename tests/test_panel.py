@@ -38,13 +38,19 @@ class Einstellungsseite(unittest.TestCase):
         self.assertEqual(_js_list("DIRECTIONS"), _const("DIRECTION_OPTIONS"))
         self.assertEqual(_js_list("POSITIONS"), list(_const("POSITION_KEYS")))
 
+    def test_jeder_reiter_hat_seite(self):
+        for tab in _js_list("TABS"):
+            with self.subTest(tab=tab):
+                self.assertRegex(PANEL, rf"\n  _{tab}\(")
+
     def test_jeder_text_vorhanden(self):
         used = set(re.findall(r'_t\("(\w+)"', PANEL))
         used |= {f"mode_{m}" for m in _js_list("MODES")}
         used |= {f"dir_{d}" for d in _js_list("DIRECTIONS")}
         used |= {f"pos_{p}" for p in _js_list("POSITIONS")}
         used |= {f"means_{m}" for m in _const("WINDOW_MEANS_OPTIONS")}
-        used |= {f"tab_{t}" for t in ("overview", "rooms")}
+        used |= {f"tab_{t}" for t in _js_list("TABS")}
+        used |= {f"mode_{m}_text" for m in _js_list("MODES")}
         used |= {f"phase_{p}" for p in ("day", "dusk", "night")}
         self.assertGreater(len(used), 40)
         for lang in ("de", "en"):

@@ -19,7 +19,7 @@ from . import websocket
 from .conductor import Conductor
 from .const import DOMAIN
 
-PLATFORMS = [Platform.SELECT, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PANEL_URL = "facade-conductor"
 STATIC_URL = f"/{DOMAIN}_static"
@@ -51,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: FacadeConfigEntry) -> bo
             sidebar_icon="mdi:window-shutter",
             module_url=f"{STATIC_URL}/panel.js?v={version}",
             require_admin=True,
+            config={"version": version},
         )
 
     async def _start(_hass: HomeAssistant) -> None:

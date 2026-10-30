@@ -22,6 +22,7 @@ CONF_WINDOW_MEANS = "window_means"
 CONF_SLEEP_SENSOR = "sleep_sensor"
 CONF_SLEEP_PAUSE_START = "sleep_pause_start"
 CONF_SLEEP_PAUSE_END = "sleep_pause_end"
+CONF_SLEEP_WAKE_MINUTES = "sleep_wake_minutes"
 CONF_DIRECTION = "direction"
 CONF_ADVANCED = "advanced"
 

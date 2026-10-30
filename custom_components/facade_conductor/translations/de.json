@@ -204,6 +204,11 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "asleep": {
+        "name": "Schlafen"
+      }
+    },
     "select": {
       "mode": {
         "name": "Betriebsart",
@@ -231,6 +236,19 @@
       },
       "target_position": {
         "name": "Zielposition"
+      },
+      "window": {
+        "name": "Fenster",
+        "state": {
+          "closed": "zu",
+          "tilted": "gekippt",
+          "open": "offen"
+        }
+      }
+    },
+    "switch": {
+      "manual": {
+        "name": "Handbetrieb"
       }
     }
   }

@@ -2,6 +2,7 @@
 
 import ast
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -66,6 +67,28 @@ class Uebersetzungen(unittest.TestCase):
         for lang, data in LANGS.items():
             with self.subTest(lang=lang):
                 self.assertEqual(set(data["entity"]["sensor"]["reason"]["state"]), reasons)
+
+    def test_jede_entitaet_hat_namen(self):
+        found = 0
+        for platform in ("binary_sensor", "select", "sensor", "switch"):
+            source = (BASE / f"{platform}.py").read_text(encoding="utf-8")
+            keys = set(re.findall(r'super\(\).__init__\(conductor, room, "(\w+)"\)', source))
+            keys |= set(re.findall(r'_attr_translation_key = "(\w+)"', source))
+            for key in keys:
+                found += 1
+                for lang, data in LANGS.items():
+                    with self.subTest(platform=platform, key=key, lang=lang):
+                        self.assertIn("name", data["entity"][platform][key])
+        self.assertGreaterEqual(found, 6)
+
+    def test_jeder_fensterzustand_hat_text(self):
+        tree = ast.parse((BASE / "engine.py").read_text(encoding="utf-8"))
+        window_cls = next(c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Window")
+        states = {s.targets[0].id.lower() for s in window_cls.body if isinstance(s, ast.Assign)}
+        self.assertEqual(len(states), 3)
+        for lang, data in LANGS.items():
+            with self.subTest(lang=lang):
+                self.assertEqual(set(data["entity"]["sensor"]["window"]["state"]), states)
 
 
 if __name__ == "__main__":

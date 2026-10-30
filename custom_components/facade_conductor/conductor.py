@@ -35,6 +35,7 @@ from .const import (
     CONF_SLEEP_PAUSE_END,
     CONF_SLEEP_PAUSE_START,
     CONF_SLEEP_SENSOR,
+    CONF_SLEEP_WAKE_MINUTES,
     CONF_WEATHER,
     CONF_WINDOW_MEANS,
     CONF_WINDOW_SENSOR,
@@ -61,6 +62,7 @@ from .engine import (
     direction_range,
     may_move,
     phase_for,
+    still_asleep,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,7 +85,9 @@ class Room:
     window_sensor: str | None
     window_means: Window
     sleep_sensor: str | None
+    wake_delay: float = 0
     decision: Decision | None = None
+    state: RoomState | None = None
     manual: int | None = None
     last_auto_move: float | None = None
 
@@ -129,6 +133,7 @@ class Conductor:
             window_sensor=data.get(CONF_WINDOW_SENSOR),
             window_means=Window.OPEN if data.get(CONF_WINDOW_MEANS) == "open" else Window.TILTED,
             sleep_sensor=data.get(CONF_SLEEP_SENSOR),
+            wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
         )
 
     # Lebenszyklus
@@ -167,6 +172,19 @@ class Conductor:
     @callback
     def set_mode(self, mode: str) -> None:
         self.mode = mode
+        if mode != MODE_AUTO:
+            for room in self.rooms:
+                room.manual = None
+        self._schedule()
+
+    @callback
+    def set_manual(self, room: Room, on: bool) -> None:
+        """Handbetrieb von außen: an hält die jetzige Position, aus gibt den Raum der Automatik zurück."""
+        if on:
+            positions = self._current(room)
+            room.manual = round(sum(positions.values()) / len(positions)) if positions else None
+        else:
+            room.manual = None
         self._schedule()
 
     # Eingänge
@@ -174,7 +192,8 @@ class Conductor:
     @callback
     def _on_state(self, event: Event[EventStateChangedData]) -> None:
         entity_id = event.data["entity_id"]
-        if entity_id.startswith("cover."):
+        # Im Probelauf fährt FaCo nie selbst, jede Fahrt käme von alten Automationen und wäre kein Handbetrieb
+        if entity_id.startswith("cover.") and self.mode == MODE_AUTO:
             old, new = event.data["old_state"], event.data["new_state"]
             if self._log.is_manual(entity_id, _position(old), _position(new), time.monotonic()):
                 for room in self.rooms:
@@ -230,7 +249,12 @@ class Conductor:
 
     def _asleep(self, room: Room) -> bool:
         state = self.hass.states.get(room.sleep_sensor) if room.sleep_sensor else None
-        return state is not None and state.state == STATE_ON
+        if state is None:
+            return False
+        on = state.state == STATE_ON
+        # der Minutentakt prüft erneut, sobald die Pause vorbei ist
+        off_for = None if on else (dt_util.utcnow() - state.last_changed).total_seconds()
+        return still_asleep(on, off_for, room.wake_delay)
 
     def _current(self, room: Room) -> dict[str, int]:
         return {c: p for c in room.covers if (p := _position(self.hass.states.get(c))) is not None}
@@ -255,13 +279,13 @@ class Conductor:
         current: dict[str, int] = {}
         moving: list[Room] = []
         for room in self.rooms:
+            room.state = RoomState(window=self._window(room), asleep=self._asleep(room), manual=room.manual)
             positions = self._current(room)
             if not positions:
                 room.decision = None
                 continue
             here = round(sum(positions.values()) / len(positions))
-            state = RoomState(window=self._window(room), asleep=self._asleep(room), manual=room.manual)
-            room.decision = decide(room.cfg, state, house, here)
+            room.decision = decide(room.cfg, room.state, house, here)
             current.update(positions)
             if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):
                 targets.update({c: room.decision.position for c in positions})

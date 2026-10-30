@@ -24,10 +24,19 @@ from .const import (
     CONF_AREA,
     CONF_COVERS,
     CONF_DIRECTION,
+    CONF_HOT_TEMPERATURE,
+    CONF_LUX_BRIGHT,
+    CONF_LUX_DARK,
+    CONF_LUX_SENSOR,
+    CONF_NIGHT_END,
+    CONF_NIGHT_START,
     CONF_POSITIONS,
+    CONF_REST_MINUTES,
     CONF_SLEEP_PAUSE_END,
     CONF_SLEEP_PAUSE_START,
     CONF_SLEEP_SENSOR,
+    CONF_SLEEP_WAKE_MINUTES,
+    CONF_WEATHER,
     CONF_WINDOW_MEANS,
     CONF_WINDOW_SENSOR,
     DEFAULT_POSITIONS,
@@ -47,6 +56,7 @@ ROOM_CHANGES = vol.Schema(
         vol.Optional(CONF_WINDOW_SENSOR): vol.Any(None, cv.entity_domain("binary_sensor")),
         vol.Optional(CONF_WINDOW_MEANS): vol.In(WINDOW_MEANS_OPTIONS),
         vol.Optional(CONF_SLEEP_SENSOR): vol.Any(None, cv.entity_domain(["binary_sensor", "input_boolean"])),
+        vol.Optional(CONF_SLEEP_WAKE_MINUTES): vol.Any(None, vol.All(vol.Coerce(int), vol.Range(min=0, max=120))),
         vol.Optional(CONF_DIRECTION): vol.In(DIRECTION_OPTIONS),
         vol.Optional(CONF_POSITIONS): {vol.In(POSITION_KEYS): vol.Any(None, PERCENT)},
         vol.Optional(CONF_ADVANCED): {
@@ -55,10 +65,26 @@ ROOM_CHANGES = vol.Schema(
     }
 )
 
+LUX = vol.All(vol.Coerce(int), vol.Range(min=0, max=100000))
+HOUSE_CHANGES = vol.Schema(
+    {
+        vol.Optional(CONF_WEATHER): vol.Any(None, cv.entity_domain("weather")),
+        vol.Optional(CONF_HOT_TEMPERATURE): vol.All(vol.Coerce(float), vol.Range(min=10, max=40)),
+        vol.Optional(CONF_LUX_SENSOR): vol.Any(None, cv.entity_domain("sensor")),
+        vol.Optional(CONF_LUX_DARK): LUX,
+        vol.Optional(CONF_LUX_BRIGHT): LUX,
+        vol.Optional(CONF_NIGHT_START): TIME_TEXT,
+        vol.Optional(CONF_NIGHT_END): TIME_TEXT,
+        vol.Optional(CONF_REST_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=0, max=240)),
+        vol.Optional(CONF_POSITIONS): {vol.In(POSITION_KEYS): PERCENT},
+    }
+)
+HOUSE_KEYS = [k.schema for k in HOUSE_CHANGES.schema if k.schema != CONF_POSITIONS]
+
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
-    for command in (ws_info, ws_room_add, ws_room_update, ws_room_remove):
+    for command in (ws_info, ws_house_update, ws_room_add, ws_room_update, ws_room_remove):
         websocket_api.async_register_command(hass, command)
 
 
@@ -103,6 +129,7 @@ def ws_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
                 "target": decision.position if decision else None,
                 "reason": decision.reason.value if decision else None,
                 "reason_entity": ent_reg.async_get_entity_id("sensor", DOMAIN, f"{sub.subentry_id}_reason"),
+                "manual_entity": ent_reg.async_get_entity_id("switch", DOMAIN, f"{sub.subentry_id}_manual"),
             }
         )
     connection.send_result(
@@ -111,10 +138,32 @@ def ws_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
             "mode": conductor.mode,
             "mode_entity": ent_reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_mode"),
             "phase": conductor.phase.value if conductor.phase else None,
+            "house": {k: conductor.house.get(k) for k in HOUSE_KEYS},
             "positions": {k: int(v) for k, v in {**DEFAULT_POSITIONS, **conductor.house.get(CONF_POSITIONS, {})}.items()},
             "rooms": sorted(rooms, key=lambda r: r["name"].casefold()),
         },
     )
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/house/update", vol.Required("changes"): HOUSE_CHANGES}
+)
+@websocket_api.require_admin
+@callback
+def ws_house_update(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Wie „Konfigurieren“ beim Haus: Änderungen landen in den Optionen."""
+    if (entry := _entry(hass, connection, msg)) is None:
+        return
+    changes = dict(msg["changes"])
+    current = entry.runtime_data.house
+    if CONF_POSITIONS in changes:
+        changes[CONF_POSITIONS] = {**current.get(CONF_POSITIONS, {}), **changes[CONF_POSITIONS]}
+    merged = {**current, **changes}
+    if merged[CONF_LUX_DARK] >= merged[CONF_LUX_BRIGHT]:
+        connection.send_error(msg["id"], "invalid_format", "Dunkel muss unter hell liegen")
+        return
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **changes})
+    connection.send_result(msg["id"])
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/room/add", vol.Required("area"): str})
