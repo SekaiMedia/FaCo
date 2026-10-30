@@ -5,10 +5,10 @@
         "title": "Set up Facade Conductor",
         "description": "That is all you need to start. Everything else is under Configure later, rooms are added with Add room.",
         "data": {
-          "weather": "Weather for heat protection"
+          "weather": "Weather for heat protection (optional)"
         },
         "data_description": {
-          "weather": "Optional. Without weather there is no heat protection."
+          "weather": "May stay empty. Without weather there is no heat protection, you can add it later under Configure."
         }
       }
     },
@@ -23,7 +23,8 @@
         "menu_options": {
           "heat": "Heat protection",
           "daylight": "Daylight",
-          "night": "Quiet hours",
+          "night": "Night closing",
+          "behavior": "Movement",
           "positions": "Default positions"
         }
       },
@@ -51,14 +52,21 @@
         }
       },
       "night": {
-        "title": "Quiet hours",
+        "title": "Night closing",
+        "description": "During this time the shutters move to their night position.\n\nAn open window still keeps its ventilation gap.",
         "data": {
-          "night_start": "Quiet hours from",
-          "night_end": "Quiet hours until",
-          "rest_minutes": "Rest after a move"
+          "night_start": "Night closing from",
+          "night_end": "Night closing until"
+        }
+      },
+      "behavior": {
+        "title": "Movement",
+        "description": "After an automatic move, a room waits this long before it moves automatically again.\n\nSafety, manual moves and open windows never wait, they act immediately.",
+        "data": {
+          "rest_minutes": "Minimum time between two moves"
         },
         "data_description": {
-          "rest_minutes": "A room does not move again for this long after an automatic move. Safety, manual and windows act immediately."
+          "rest_minutes": "Prevents back and forth, for example with passing clouds."
         }
       },
       "positions": {

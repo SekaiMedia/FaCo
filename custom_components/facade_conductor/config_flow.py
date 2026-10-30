@@ -125,7 +125,7 @@ class HouseOptionsFlow(OptionsFlow):
         return self.async_create_entry(data={**self.config_entry.options, **changes})
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        return self.async_show_menu(step_id="init", menu_options=["heat", "daylight", "night", "positions"])
+        return self.async_show_menu(step_id="init", menu_options=["heat", "daylight", "night", "behavior", "positions"])
 
     async def async_step_heat(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -160,10 +160,18 @@ class HouseOptionsFlow(OptionsFlow):
             {
                 vol.Required(CONF_NIGHT_START, default=v[CONF_NIGHT_START]): TIME,
                 vol.Required(CONF_NIGHT_END, default=v[CONF_NIGHT_END]): TIME,
-                vol.Required(CONF_REST_MINUTES, default=v[CONF_REST_MINUTES]): _number(0, 240, 1, "min"),
             }
         )
         return self.async_show_form(step_id="night", data_schema=schema)
+
+    async def async_step_behavior(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self._save(user_input)
+        v = self._current()
+        schema = vol.Schema(
+            {vol.Required(CONF_REST_MINUTES, default=v[CONF_REST_MINUTES]): _number(0, 240, 1, "min")}
+        )
+        return self.async_show_form(step_id="behavior", data_schema=schema)
 
     async def async_step_positions(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:

@@ -5,10 +5,10 @@
         "title": "Facade Conductor einrichten",
         "description": "Mehr braucht es zum Start nicht. Alles Weitere findest du später unter „Konfigurieren“, Räume fügst du über „Raum hinzufügen“ hinzu.",
         "data": {
-          "weather": "Wetter für den Hitzeschutz"
+          "weather": "Wetter für den Hitzeschutz (optional)"
         },
         "data_description": {
-          "weather": "Optional. Ohne Wetter gibt es keinen Hitzeschutz."
+          "weather": "Kann leer bleiben. Ohne Wetter gibt es keinen Hitzeschutz, ergänzen geht später unter Konfigurieren."
         }
       }
     },
@@ -23,7 +23,8 @@
         "menu_options": {
           "heat": "Hitzeschutz",
           "daylight": "Tageslicht",
-          "night": "Nachtruhe",
+          "night": "Nachtschließung",
+          "behavior": "Fahrverhalten",
           "positions": "Standardpositionen"
         }
       },
@@ -51,14 +52,21 @@
         }
       },
       "night": {
-        "title": "Nachtruhe",
+        "title": "Nachtschließung",
+        "description": "In dieser Zeit fahren die Rollläden auf ihre Nachtposition.\n\nEin offenes Fenster behält trotzdem seinen Lüftungsspalt.",
         "data": {
-          "night_start": "Nachtruhe ab",
-          "night_end": "Nachtruhe bis",
-          "rest_minutes": "Ruhe nach einer Fahrt"
+          "night_start": "Nachtschließung ab",
+          "night_end": "Nachtschließung bis"
+        }
+      },
+      "behavior": {
+        "title": "Fahrverhalten",
+        "description": "Nach einer automatischen Fahrt wartet ein Raum diese Zeit, bevor er wieder automatisch fährt.\n\nSicherheit, Handbetrieb und offene Fenster warten nie, sie wirken sofort.",
+        "data": {
+          "rest_minutes": "Mindestabstand zwischen zwei Fahrten"
         },
         "data_description": {
-          "rest_minutes": "So lange fährt ein Raum nach einer automatischen Fahrt nicht erneut. Sicherheit, Hand und Fenster wirken sofort."
+          "rest_minutes": "Verhindert Hin und Her, etwa bei wechselnden Wolken."
         }
       },
       "positions": {

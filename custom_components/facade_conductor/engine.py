@@ -188,7 +188,7 @@ def direction_range(direction: str, width: float = 45) -> tuple[float, float]:
 
 
 def phase_for(hour: float, night_start: float, night_end: float, dark: bool) -> Phase:
-    """Nachtruhe nach Uhrzeit. Dunkel am Morgen bleibt Nacht, dunkel am Abend ist Dämmerung."""
+    """Nachtschließung nach Uhrzeit. Dunkel am Morgen bleibt Nacht, dunkel am Abend ist Dämmerung."""
     if situation_active(hour, night_start, night_end):
         return Phase.NIGHT
     if dark:
