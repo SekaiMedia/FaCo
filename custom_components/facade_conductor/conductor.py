@@ -12,8 +12,8 @@ from typing import Any
 
 from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -24,6 +24,8 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BUNDLE_SECONDS,
     CONF_ADVANCED,
+    CONF_ALARM_PANEL,
+    CONF_COLD_BELOW,
     CONF_AREA,
     CONF_COOLING_ABOVE,
     CONF_COOLING_OUTSIDE,
@@ -34,11 +36,14 @@ from .const import (
     CONF_DOOR,
     CONF_DIRECTION_DEG,
     CONF_HOT_TEMPERATURE,
+    CONF_HUMIDITY_SENSOR,
+    CONF_INSULATION,
     CONF_LUX_BRIGHT,
     CONF_LUX_DARK,
     CONF_LUX_SENSOR,
     CONF_NIGHT_END,
     CONF_NIGHT_START,
+    CONF_OUTDOOR_HUMIDITY,
     CONF_OUTDOOR_TEMP,
     CONF_POSITIONS,
     CONF_RAIN_LEVEL,
@@ -63,10 +68,13 @@ from .const import (
     CONF_WAKE_WAIT,
     CONF_WEATHER,
     CONF_WINDOW_MEANS,
+    CONF_WALL_SENSOR,
     CONF_WINDOW_SENSOR,
+    CONF_WINDOW_TILT,
     DEFAULT_POSITIONS,
     DEFAULTS,
     DEFAULT_COOLING_ABOVE,
+    DEFAULT_INSULATION,
     DEFAULT_SLEEP_WATTS,
     EVALUATE_INTERVAL_SECONDS,
     FORECAST_INTERVAL_MINUTES,
@@ -97,9 +105,12 @@ from .engine import (
     may_move,
     frost_step,
     lagged_phase,
+    mold_risk,
+    next_change,
     phase_for,
     rain_at_least,
     rain_in,
+    rain_protect,
     raining,
     safety_trigger,
     situation_hold,
@@ -110,10 +121,14 @@ from .engine import (
     still_asleep,
     wake_phase,
     vacation_offset,
+    ventilation,
+    absolute_humidity,
     vacation_position,
     wake_until,
     warm_step,
     wet,
+    window_hint,
+    window_state,
     wind_step,
 )
 from .leave import LeaveWatcher, owner
@@ -124,9 +139,13 @@ SUN = "sun.sun"
 # Speichern im Panel lädt die Integration neu. Was der Takt sich gemerkt hat, soll das überstehen:
 # sonst endet der Handbetrieb, ein gefrorener Rollladen fährt, ein geweckter Raum schließt wieder.
 KEEP_HOUSE = ("phase", "_phase_changed", "frost", "_last_rain", "_last_heavy", "wind", "_last_strong",
-              "_away_since", "_log", "_tilt_sent")
+              "_away_since", "_log", "_tilt_sent", "_armed", "external_alarm")
 KEEP_ROOM = ("manual", "manual_hold", "last_auto_move", "woken_until", "rain_warned", "vacation_phase", "warm",
-             "last_asleep", "situation", "held")
+             "last_asleep", "situation", "held", "window_since", "hinted", "humid_since", "mold_high",
+             "mold_day")
+HUMID_ABOVE = 65
+HUMID_AFTER = 7200
+MOLD_AFTER = 6 * 3600
 
 
 def _hours(value: str | None) -> float | None:
@@ -145,6 +164,21 @@ class Room:
     covers: list[str]
     window_sensor: str | None
     window_means: Window
+    tilt_sensor: str | None = None
+    humidity_sensor: str | None = None
+    wall_sensor: str | None = None
+    insulation: float = DEFAULT_INSULATION
+    window_since: float | None = None  # seit wann das Fenster offen ist, für die Hinweise
+    hinted: set[str] = field(default_factory=set)  # schon gegebene Hinweise, bis das Fenster wieder zu ist
+    humid_since: float | None = None
+    mold_high: float = 0  # Sekunden mit hohem Schimmelrisiko heute
+    mold_day: Any = None
+    climate_at: float | None = None
+    advice: str | None = None  # Lüftungsempfehlung
+    humidity_after: float | None = None
+    absolute: float | None = None
+    mold: str | None = None
+    humidity_spot: float | None = None
     sleep_sensor: str | None
     wake_delay: float = 0
     sleep_watts: float | None = None  # gesetzt, wenn der Schlaf-Geber ein Leistungssensor ist
@@ -206,7 +240,9 @@ class Conductor:
         self._pending: CALLBACK_TYPE | None = None
         self.safety = list(house[CONF_SAFETY])
         self.leave = LeaveWatcher(hass, house, lambda: self.mode != MODE_OFF)
-        self.messages = Messages(hass, house, lambda: self.leave.persons, self._resume, self._quiet)
+        self._armed = False
+        self.external_alarm: int | None = None  # Aktion facade_conductor.alarm
+        self.messages = Messages(hass, house, lambda: self.leave.persons, self._resume, self._quiet, self._retry)
         self.rooms = [
             self._room(sub.subentry_id, sub.title, dict(sub.data))
             for sub in entry.subentries.values()
@@ -240,6 +276,10 @@ class Conductor:
             cfg=cfg,
             covers=list(data[CONF_COVERS]),
             window_sensor=data.get(CONF_WINDOW_SENSOR),
+            tilt_sensor=data.get(CONF_WINDOW_TILT),
+            humidity_sensor=data.get(CONF_HUMIDITY_SENSOR),
+            wall_sensor=data.get(CONF_WALL_SENSOR),
+            insulation=float(data.get(CONF_INSULATION) or DEFAULT_INSULATION),
             window_means=Window.OPEN if data.get(CONF_WINDOW_MEANS) == "open" else Window.TILTED,
             sleep_sensor=data.get(CONF_SLEEP_SENSOR),
             situations=list(data.get(CONF_SITUATIONS) or []),
@@ -270,11 +310,20 @@ class Conductor:
         watched += [e for e in (self.house.get(k) for k in weather) if e]
         for room in self.rooms:
             watched += room.covers
-            watched += [e for e in (room.window_sensor, room.sleep_sensor, room.cooling_sensor, room.wake_sensor) if e]
+            watched += [
+                e
+                for e in (room.window_sensor, room.tilt_sensor, room.sleep_sensor, room.cooling_sensor, room.wake_sensor)
+                if e
+            ]
+        if alarm := self.house.get(CONF_ALARM_PANEL):
+            watched.append(alarm)
             watched += [s["entity"] for s in room.situations]
         # Messwerte, die sich ständig ändern, liest der Minutentakt; sie lösen keine eigene Rechnung aus
         self._slow = {e for e in (self.house.get(k) for k in weather) if e and e != self.house.get(CONF_RAIN_SENSOR)}
         self._slow |= {e for r in self.rooms for e in (r.cooling_sensor, r.sleep_sensor) if e and e.startswith("sensor.")}
+        # Feuchte und Wand ändern sich langsam und lösen nichts aus; der Minutentakt liest sie
+        if humidity := self.house.get(CONF_OUTDOOR_HUMIDITY):
+            self._slow.add(humidity)
         for room in self.rooms:
             room.wake_owner = owner(self.hass, room.wake_sensor) if room.wake_sensor else None
         self._unsubs.append(async_track_state_change_event(self.hass, watched, self._on_state))
@@ -333,6 +382,40 @@ class Conductor:
     def set_vacation(self, on: bool) -> None:
         self.vacation_switch = on
         self._schedule()
+
+    @callback
+    def _retry(self, cover: str) -> None:
+        """Knopf „Erneut versuchen“: das letzte Ziel noch einmal schicken."""
+        if (target := self._log.target(cover)) is not None:
+            self._task(
+                self.hass.services.async_call("cover", "set_cover_position", {"position": target}, target={"entity_id": cover})
+            )
+
+    @callback
+    def async_service(self, service: str, data: dict[str, Any]) -> None:
+        """Aktionen für andere Automationen; ohne Entitäten gilt eine Aktion für alle Räume."""
+        ent_reg = er.async_get(self.hass)
+        chosen = {e.config_subentry_id for i in data.get("entity_id", []) if (e := ent_reg.async_get(i))}
+        rooms = [r for r in self.rooms if not chosen or r.subentry_id in chosen]
+        if service == "alarm":
+            self.external_alarm = data.get("position")
+        for room in rooms:
+            if service in ("pause", "resume"):
+                self.set_manual(room, service == "pause")
+            elif service == "wake":
+                now = dt_util.now()
+                noon = now.replace(hour=12, minute=0, second=0, microsecond=0).timestamp()
+                room.woken_until = noon if now.timestamp() < noon else now.timestamp() + 3600
+        if service == "resume" and not chosen:
+            self.external_alarm = None
+        self._schedule()
+
+    def next_move(self, room: Room) -> tuple[Any, int]:
+        """Nächste feste Fahrt des Raums: Uhrzeit und Ziel."""
+        now = dt_util.now().replace(second=0, microsecond=0)
+        ahead, phase = next_change(now.hour + now.minute / 60, *self._night)
+        position = room.cfg.positions.night if phase is Phase.NIGHT else room.cfg.positions.day
+        return now + timedelta(minutes=round(ahead * 60)), position
 
     @callback
     def _resume(self, subentry_id: str) -> None:
@@ -430,10 +513,14 @@ class Conductor:
         return sun is not None and sun.state == "below_horizon"
 
     def _window(self, room: Room) -> Window:
-        if not room.window_sensor:
-            return Window.CLOSED
-        state = self.hass.states.get(room.window_sensor)
-        return room.window_means if state and state.state == STATE_ON else Window.CLOSED
+        tilt = self._value(room.tilt_sensor) if room.tilt_sensor else None
+        return window_state(self._value(room.window_sensor), tilt, room.window_means)
+
+    def _number(self, entity_id: str | None) -> float | None:
+        try:
+            return float(self._value(entity_id))
+        except (TypeError, ValueError):
+            return None
 
     def _asleep(self, room: Room) -> bool:
         state = self.hass.states.get(room.sleep_sensor) if room.sleep_sensor else None
@@ -531,7 +618,7 @@ class Conductor:
 
         states = {t["entity"]: (st.state if (st := self.hass.states.get(t["entity"])) else None) for t in self.safety}
         found = safety_trigger(self.safety, states, self.leave.anyone_home())
-        safety = found[1] if found else None
+        safety = found[1] if found else self.external_alarm
         stamp = time.monotonic()
         if found and found[0] != self._safety_trigger and self.mode != MODE_OFF:
             self._task(self.messages.async_safety(*found))
@@ -541,7 +628,11 @@ class Conductor:
         self.frost = frost_step(self.frost, self._value(self.house.get(CONF_OUTDOOR_TEMP)), self._last_rain, stamp)
         if rain_at_least(self._value(self.house.get(CONF_RAIN_SENSOR)), self.house[CONF_RAIN_LEVEL]):
             self._last_heavy = stamp
-        wet_now = wet(self._last_heavy, stamp)
+        light_wet, level_wet = wet(self._last_rain, stamp), wet(self._last_heavy, stamp)
+        outside_t = self._number(self.house.get(CONF_OUTDOOR_TEMP))
+        outside_rh = self._number(self.house.get(CONF_OUTDOOR_HUMIDITY))
+        armed = (self._value(self.house.get(CONF_ALARM_PANEL)) or "").startswith("armed")
+        armed_now, self._armed = armed and not self._armed, armed
         wind_from = self._value(self.house.get(CONF_WIND_DIRECTION))
         wind_speed = self._kmh(CONF_WIND_SPEED)
         self.wind, self._last_strong = wind_step(
@@ -552,6 +643,7 @@ class Conductor:
         after = float(self.house[CONF_VACATION_AFTER]) * 3600
         self.vacation = self.vacation_switch or bool(after and self._away_since and stamp - self._away_since >= after)
         tilts: dict[str, int] = {}
+        retries: dict[str, int] = {}
         targets: dict[str, int] = {}
         current: dict[str, int] = {}
         moving: list[Room] = []
@@ -571,17 +663,18 @@ class Conductor:
                 frost=self.frost,
                 wind=self.wind and any(self._blind(c) for c in room.covers),
             )
-            facing_rain = wet_now and rain_in(room.facing, wind_from, wind_speed)
-            if room.state.door:
-                # Türen nie unter die Durchgangshöhe, stattdessen eine Meldung
-                if facing_rain and room.state.window is not Window.CLOSED and not room.rain_warned:
-                    if self.mode != MODE_OFF:
-                        room.rain_warned = True
-                        self._task(self.messages.async_rain_door(room))
-                elif not wet_now:
-                    room.rain_warned = False
-            else:
-                room.state = replace(room.state, rain=facing_rain)
+            window = room.state.window
+            raining_in = rain_protect(window, light_wet, level_wet, rain_in(room.facing, wind_from, wind_speed))
+            if not room.state.door:
+                room.state = replace(room.state, rain=raining_in)
+            # Türen fahren nicht auf den Regenspalt; ganz offene Fenster und Räume ohne Rollladen melden
+            if raining_in and (room.state.door or window is Window.OPEN or not room.covers):
+                if not room.rain_warned and self.mode != MODE_OFF:
+                    room.rain_warned = True
+                    self._task(self.messages.async_rain(room, room.state.door))
+            elif not light_wet:
+                room.rain_warned = False
+            self._hints(room, window, stamp, outside_t, outside_rh)
             positions = self._current(room)
             if not positions:
                 room.decision = None
@@ -610,15 +703,31 @@ class Conductor:
             situation_moves = any(s["entity"] == room.situation and s.get("position") is not None for s in room.situations)
             if stand_still(room.decision.reason, room.manual_hold, situation_moves):
                 continue  # jeder Behang bleibt, wo er ist, statt auf das Mittel des Raums zu fahren
-            if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):
-                for c in positions:
-                    targets[c], tilt = self._target(room, c, room_house, here)
+            desired = {c: self._target(room, c, room_house, here) for c in positions}
+            if self.mode == MODE_AUTO:
+                retries.update(
+                    {c: p for c, (p, _) in desired.items() if self._log.target(c) == p and self._log.retry_due(c, positions[c], stamp)}
+                )
+            closing = room.decision.position < here
+            if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest(), closing):
+                for c, (position, tilt) in desired.items():
+                    targets[c] = position
                     if tilt is not None:
                         tilts[c] = tilt
                 moving.append(room)
 
+        if armed_now and self.mode != MODE_OFF:
+            # beim Scharfschalten: welche Fenster und Türen noch offen sind
+            names = [self._name(r.window_sensor) for r in self.rooms if r.state and r.state.window is not Window.CLOSED]
+            if names:
+                self._task(self.messages.async_alarm(names))
+        # ein Befehl kam nach 60 s nicht an: einmal nachsenden
+        for position, entity_ids in batch(retries, {}).items():
+            await self.hass.services.async_call(
+                "cover", "set_cover_position", {"position": position}, target={"entity_id": entity_ids}, blocking=False
+            )
         if self.mode == MODE_AUTO and targets:
-            targets = {e: p for e, p in targets.items() if not self._log.in_flight(e, p, stamp)}
+            targets = {e: p for e, p in targets.items() if e not in retries and not self._log.in_flight(e, p, stamp)}
             plan = batch(targets, current)
             for position, entity_ids in plan.items():
                 for entity_id in entity_ids:
@@ -647,6 +756,7 @@ class Conductor:
             self.vacation,
             tuple(sorted(current.items())),
             tuple((r.decision, r.state, r.manual, r.situation) for r in self.rooms),
+            tuple((r.advice, round(r.humidity_after or 0), r.mold, round(r.humidity_spot or 0)) for r in self.rooms),
         )
         if snapshot == self._snapshot:
             return
@@ -684,6 +794,51 @@ class Conductor:
             await self.hass.services.async_call(
                 "cover", "set_cover_tilt_position", {"tilt_position": tilt}, target={"entity_id": cover}, blocking=False
             )
+
+    def _name(self, entity_id: str | None) -> str:
+        state = self.hass.states.get(entity_id) if entity_id else None
+        return state.name if state else str(entity_id)
+
+    def _hints(self, room: Room, window: Window, stamp: float, outside_t: float | None, outside_rh: float | None) -> None:
+        """Hinweise zu offenen Fenstern sowie Lüftungsrechner und Schimmelwarner, je Raum."""
+        if window is Window.CLOSED:
+            room.window_since = None
+            room.hinted = {h for h in room.hinted if h in ("humid", "mold")}
+        elif room.window_since is None:
+            room.window_since = stamp
+        inside_t = self._number(room.cooling_sensor)
+        hints = []
+        hint = window_hint(window, stamp - (room.window_since or stamp), outside_t, inside_t, float(self.house[CONF_COLD_BELOW]))
+        if hint:
+            hints.append(hint)
+        inside_rh = self._number(room.humidity_sensor)
+        if inside_t is not None and inside_rh is not None and outside_t is not None:
+            room.mold, room.humidity_spot = mold_risk(inside_t, inside_rh, outside_t, room.insulation, self._number(room.wall_sensor))
+            if outside_rh is not None:
+                room.advice, room.humidity_after = ventilation(inside_t, inside_rh, outside_t, outside_rh)
+                room.absolute = round(absolute_humidity(inside_t, inside_rh), 1)
+                if room.advice == "close" and window is not Window.CLOSED:
+                    hints.append("humid_open")
+            # drinnen lange feucht und draußen trockener
+            room.humid_since = (room.humid_since or stamp) if inside_rh > HUMID_ABOVE else None
+            if room.humid_since is None:
+                room.hinted.discard("humid")
+            elif stamp - room.humid_since >= HUMID_AFTER and room.advice == "ventilate":
+                hints.append("humid")
+            # Schimmel braucht viele Stunden: hohes Risiko je Tag aufsummieren
+            today = dt_util.now().date()
+            if room.mold_day != today:
+                room.mold_day, room.mold_high = today, 0
+                room.hinted.discard("mold")
+            if room.mold == "high" and room.climate_at is not None:
+                room.mold_high += stamp - room.climate_at
+            if room.mold_high >= MOLD_AFTER:
+                hints.append("mold")
+            room.climate_at = stamp
+        for hint in hints:
+            if hint not in room.hinted and self.mode != MODE_OFF:
+                room.hinted.add(hint)
+                self._task(self.messages.async_hint(room, hint, outside=round(outside_t or 0), inside=round(inside_t or 0)))
 
     def _rest(self) -> float:
         return float(self.house[CONF_REST_MINUTES]) * 60

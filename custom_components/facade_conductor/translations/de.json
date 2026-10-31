@@ -266,6 +266,26 @@
           "tilted": "gekippt",
           "open": "offen"
         }
+      },
+      "next_move": {
+        "name": "Nächste Fahrt"
+      },
+      "ventilation": {
+        "name": "Lüftungsempfehlung",
+        "state": {
+          "ventilate": "Lüften",
+          "cool": "Zum Kühlen lüften",
+          "close": "Fenster zu",
+          "neutral": "Egal"
+        }
+      },
+      "mold": {
+        "name": "Schimmelrisiko",
+        "state": {
+          "low": "Niedrig",
+          "medium": "Mittel",
+          "high": "Hoch"
+        }
       }
     },
     "switch": {
@@ -281,6 +301,48 @@
     "unreachable": {
       "title": "{cover} nicht erreichbar",
       "description": "{cover} im Raum {room} ist seit 15 Minuten nicht erreichbar. Facade Conductor fährt ihn erst wieder, wenn er zurück ist. Prüfe Strom und Funkverbindung. Der Eintrag verschwindet von selbst."
+    }
+  },
+  "services": {
+    "pause": {
+      "name": "Pausieren",
+      "description": "Räume in Handbetrieb setzen, bis zur nächsten Tagesphase oder bis „Fortsetzen“.",
+      "fields": {
+        "entity_id": {
+          "name": "Räume",
+          "description": "Eine Entität je Raum, etwa sein Schalter Handbetrieb. Leer heißt alle Räume."
+        }
+      }
+    },
+    "resume": {
+      "name": "Fortsetzen",
+      "description": "Handbetrieb beenden. Ohne Räume endet auch ein Alarm.",
+      "fields": {
+        "entity_id": {
+          "name": "Räume",
+          "description": "Eine Entität je Raum, etwa sein Schalter Handbetrieb. Leer heißt alle Räume."
+        }
+      }
+    },
+    "wake": {
+      "name": "Wecken",
+      "description": "Für diese Räume endet die Nacht und das Schlafen jetzt, bis mittags.",
+      "fields": {
+        "entity_id": {
+          "name": "Räume",
+          "description": "Eine Entität je Raum, etwa sein Schalter Handbetrieb. Leer heißt alle Räume."
+        }
+      }
+    },
+    "alarm": {
+      "name": "Alarm",
+      "description": "Alle Räume auf eine Position, wie ein Sicherheits-Auslöser. Ohne Position endet der Alarm.",
+      "fields": {
+        "position": {
+          "name": "Position",
+          "description": "0 zu, 100 offen."
+        }
+      }
     }
   }
 }

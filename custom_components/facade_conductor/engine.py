@@ -11,6 +11,7 @@ Positionen wie in Home Assistant: 0 = zu, 100 = offen.
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 
@@ -458,6 +459,102 @@ def due_unreachable(down_since: dict[str, float], sent: set[str], unavailable: s
     return due
 
 
+TILTED_STATES = {"tilted", "tilt", "gekippt", "kipp"}
+OPEN_STATES = {"open", "opened", "offen", "geöffnet"}
+
+
+def window_state(contact: str | None, tilt: str | None, means: Window) -> Window:
+    """Fenster aus Kontakt und optionalem Kippsensor, oder aus einem Sensor mit drei Zuständen.
+
+    Ein einfacher Kontakt kennt nur offen und zu; was „offen“ heißt, legt means fest. Mit Kippsensor
+    heißt ein offener Kontakt ohne Kippen ganz offen.
+    """
+    state = (contact or "").lower()
+    if tilt == "on" or state in TILTED_STATES:
+        return Window.TILTED
+    if state in OPEN_STATES:
+        return Window.OPEN
+    if state == "on":
+        return Window.OPEN if tilt == "off" else means
+    return Window.CLOSED
+
+
+def rain_protect(window: Window, light_wet: bool, level_wet: bool, blowing_in: bool) -> bool:
+    """Regenschutz: gekippt erst ab der gewählten Stufe, ganz offen schon bei leichtem Regen."""
+    if window is Window.CLOSED or not blowing_in:
+        return False
+    return light_wet if window is Window.OPEN else level_wet
+
+
+def next_change(hour: float, night_start: float, night_end: float) -> tuple[float, Phase]:
+    """Nächster fester Wechsel in Stunden: Nachtbeginn oder Nachtende.
+
+    shortcut: die Dämmerung hängt vom Licht ab und wird nicht vorhergesagt; reicht als Hinweis im Dashboard.
+    """
+    def ahead(t: float) -> float:
+        return (t - hour) % 24 or 24
+
+    return min((ahead(night_start), Phase.NIGHT), (ahead(night_end), Phase.DAY))
+
+
+COLD_TILTED_AFTER = 900
+COLD_OPEN_AFTER = 600
+
+
+def window_hint(
+    window: Window, open_for: float, outside: float | None, inside: float | None, cold_below: float
+) -> str | None:
+    """Hinweis zu einem offenen Fenster: Dauerkippen bei Kälte, Stoßlüften reicht, oder draußen zu heiß."""
+    if window is Window.CLOSED or outside is None:
+        return None
+    if outside < cold_below:
+        if window is Window.TILTED and open_for >= COLD_TILTED_AFTER:
+            return "tilted_cold"
+        if window is Window.OPEN and open_for >= COLD_OPEN_AFTER:
+            return "open_cold"
+    if inside is not None and outside >= 25 and outside > inside + 2:
+        return "heat"
+    return None
+
+
+def absolute_humidity(temperature: float, humidity: float) -> float:
+    """Wasser in der Luft in g/m³ nach der Magnus-Formel."""
+    saturation = 6.112 * math.exp(17.62 * temperature / (243.12 + temperature))
+    return 216.7 * (humidity / 100 * saturation) / (273.15 + temperature)
+
+
+def humidity_at(absolute: float, temperature: float) -> float:
+    """Relative Feuchte, die Luft mit dieser Wassermenge bei dieser Temperatur hätte."""
+    saturation = 6.112 * math.exp(17.62 * temperature / (243.12 + temperature))
+    return absolute * (273.15 + temperature) / (216.7 * saturation) * 100
+
+
+def ventilation(t_in: float, rh_in: float, t_out: float, rh_out: float) -> tuple[str, float]:
+    """Lüftungsempfehlung: Entscheidend ist das Wasser in der Luft, nicht die Prozentzahl.
+
+    Gibt (Empfehlung, Feuchte der Außenluft nach dem Erwärmen auf Raumtemperatur) zurück.
+    """
+    inside, outside = absolute_humidity(t_in, rh_in), absolute_humidity(t_out, rh_out)
+    after = humidity_at(outside, t_in)
+    if after > 70:
+        return "close", after
+    if rh_in - after >= 5:
+        return "ventilate", after
+    if t_out <= t_in - 2 and outside <= inside:
+        return "cool", after
+    return "neutral", after
+
+
+def mold_risk(t_in: float, rh_in: float, t_out: float, factor: float = 0.7, wall: float | None = None) -> tuple[str, float]:
+    """Schimmelrisiko an der kältesten Stelle der Wand, geschätzt nach DIN 4108-2 mit 70 % oder gemessen.
+
+    Gibt (niedrig, mittel oder hoch, Feuchte an dieser Stelle) zurück.
+    """
+    spot = wall if wall is not None else t_out + factor * (t_in - t_out)
+    rh = min(100.0, humidity_at(absolute_humidity(t_in, rh_in), spot))
+    return ("high" if rh > 80 else "medium" if rh >= 70 else "low"), rh
+
+
 def curtain_position(decision: Decision, phase: Phase) -> int:
     """Vorhang innen: tagsüber offen, sonst zu als Sichtschutz, beim Schlafen dunkel.
 
@@ -471,9 +568,14 @@ def curtain_position(decision: Decision, phase: Phase) -> int:
     return 100 if phase is Phase.DAY else 0
 
 
-def may_move(decision: Decision, last_auto_move: float | None, now: float, rest: float = 1200) -> bool:
-    """Ruhe nach einer automatischen Fahrt. Sicherheit, Hand und Fenster wirken sofort."""
-    if decision.level <= 3 or last_auto_move is None:
+def may_move(
+    decision: Decision, last_auto_move: float | None, now: float, rest: float = 1200, closing: bool = False
+) -> bool:
+    """Ruhe nach einer automatischen Fahrt. Sicherheit, Hand und Fenster wirken sofort.
+
+    Hitzeschutz schattet sofort ab, öffnet aber erst nach der Ruhe: Hitze kommt schneller, als sie geht.
+    """
+    if decision.level <= 3 or last_auto_move is None or (decision.reason is Reason.HEAT and closing):
         return True
     return now - last_auto_move >= rest
 
@@ -506,6 +608,9 @@ def phase_for(hour: float, night_start: float, night_end: float, dark: bool) -> 
     return Phase.DAY
 
 
+RETRY_AFTER = 60
+
+
 class CommandLog:
     """Merkt sich eigene Befehle, damit fremde Bewegungen als Handbetrieb erkannt werden."""
 
@@ -513,11 +618,28 @@ class CommandLog:
         self.grace = grace
         self._sent: dict[str, float] = {}
         self._target: dict[str, int] = {}
+        self._retried: set[str] = set()
 
     def sent(self, entity_id: str, now: float, target: int | None = None) -> None:
         self._sent[entity_id] = now
         if target is not None:
+            if target != self._target.get(entity_id):
+                self._retried.discard(entity_id)
             self._target[entity_id] = target
+
+    def target(self, entity_id: str) -> int | None:
+        return self._target.get(entity_id)
+
+    def retry_due(self, entity_id: str, current: int | None, now: float, tolerance: int = 2) -> bool:
+        """Kam ein Befehl nach 60 s nicht an, einmal nachsenden; danach meldet „nicht erreichbar“."""
+        sent, target = self._sent.get(entity_id), self._target.get(entity_id)
+        if sent is None or target is None or entity_id in self._retried or now - sent < RETRY_AFTER:
+            return False
+        if current is not None and abs(current - target) <= tolerance:
+            return False
+        self._retried.add(entity_id)
+        self._sent[entity_id] = now
+        return True
 
     def in_flight(self, entity_id: str, target: int, now: float) -> bool:
         """Dasselbe Ziel wurde gerade geschickt, der Rollladen fährt noch: nicht erneut senden."""

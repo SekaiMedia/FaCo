@@ -9,6 +9,7 @@ const STRINGS = await fetch(new URL(`./strings.json${new URL(import.meta.url).se
 const TABS = ["overview", "rooms", "settings"];
 const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "voice", "heat", "daylight", "weather", "vacation", "behavior", "about"];
 const GROUPS = ["house", "floor", "room"];
+const EVENTS = ["unreachable", "manual", "safety", "rain", "window", "alarm", "climate"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade", "rain"];
@@ -360,9 +361,12 @@ class FacadeConductorPanel extends HTMLElement {
     const h = info.house;
     const chosen = new Set(h.leave_contacts || []);
     const excluded = new Set(h.leave_exclude_persons || []);
+    // ohne Bereich sind es oft keine Türen oder Fenster, etwa der Öffnungsstatus einer Tankstelle;
+    // die zeigt erst der Schalter, gewählte Kontakte bleiben immer sichtbar
+    const noArea = this._all.filter((id) => this._isContact(id) && !this._area(id) && !chosen.has(id)).length;
     const contacts = [
       ...new Set([
-        ...this._all.filter((id) => this._isContact(id)),
+        ...this._all.filter((id) => this._isContact(id) && (this._allContacts || this._area(id))),
         ...chosen,
       ]),
     ]
@@ -383,6 +387,7 @@ class FacadeConductorPanel extends HTMLElement {
            )
            .join("") || `<p class="muted">${esc(this._t("no_contact"))}</p>`}
        </div>
+       ${noArea ? `<label class="switch"><input type="checkbox" data-all-contacts ${this._allContacts ? "checked" : ""}> ${esc(this._t("contacts_all", { n: noArea }))}</label>` : ""}
        <h3>${esc(this._t("leave_persons"))}</h3>
        ${info.persons
          .map(
@@ -426,7 +431,7 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_messages(info) {
     const h = info.house;
-    const events = ["unreachable", "manual", "safety", "rain"];
+    const events = EVENTS;
     const on = events.filter((e) => h[`notify_${e}`] || h[`announce_${e}`]).map((e) => this._t(`msg_${e}`));
     const speakers = this._all.filter((id) => id.startsWith("notify."));
     return [
@@ -441,6 +446,11 @@ class FacadeConductorPanel extends HTMLElement {
         .join("")}
        <label class="field">${esc(this._t("speaker_house"))}
          ${this._combo("h-speaker", "house", "speaker", speakers, h.speaker)}</label>
+       <div class="positions">
+         <label class="field">${esc(this._t("alarm_panel"))}
+           ${this._combo("h-alarm_panel", "house", "alarm_panel", this._all.filter((id) => id.startsWith("alarm_control_panel.")), h.alarm_panel)}</label>
+         <label class="field">${esc(this._t("cold_below"))} ${this._houseInput("cold_below", 'type="number" min="0" max="25" step="1"')}</label>
+       </div>
        <p class="muted">${esc(this._t("messages_hint"))}</p>`,
     ];
   }
@@ -534,6 +544,8 @@ class FacadeConductorPanel extends HTMLElement {
       now.length ? now.join(" · ") : on.length ? on.join(" · ") : this._t("off"),
       `<label class="field">${esc(this._t("outdoor_temp"))}
          ${this._combo("h-outdoor_temp", "house", "outdoor_temp", sensors(["temperature"]), h.outdoor_temp)}</label>
+       <label class="field">${esc(this._t("outdoor_humidity"))}
+         ${this._combo("h-outdoor_humidity", "house", "outdoor_humidity", sensors(["humidity"]), h.outdoor_humidity)}</label>
        <label class="field">${esc(this._t("rain_sensor"))}
          ${this._combo("h-rain_sensor", "house", "rain_sensor", rain, h.rain_sensor)}</label>
        <p class="muted">${esc(this._t("frost_hint"))}</p>
@@ -857,8 +869,9 @@ class FacadeConductorPanel extends HTMLElement {
           (this._area(b) === d.area) - (this._area(a) === d.area) || this._name(a).localeCompare(this._name(b)),
       );
     const chosen = new Set(d.covers || []);
+    // Kontakte, dazu Griffe mit drei Zuständen als Sensor oder Auswahl
     const windows = all.filter(
-      (id) => this._isContact(id),
+      (id) => this._isContact(id) || (/^(sensor|select|input_select)\./.test(id) && /fenster|window|griff|handle/.test(id)),
     );
     const sleepers = all.filter(
       (id) =>
@@ -895,6 +908,8 @@ class FacadeConductorPanel extends HTMLElement {
         <h3>${esc(this._t("window"))}${windowNow}</h3>
         <label class="field">${esc(this._t("window_sensor"))}
           ${this._combo("f-window", "room", "window_sensor", windows, d.window_sensor)}</label>
+        <label class="field">${esc(this._t("window_tilt"))}
+          ${this._combo("f-tilt", "room", "window_tilt_sensor", all.filter((id) => id.startsWith("binary_sensor.")), d.window_tilt_sensor)}</label>
         <label class="field">${esc(this._t("window_means"))}
           <select id="f-means" data-field="window_means">
             ${["tilted", "open"].map((m) => `<option value="${m}" ${(d.window_means || "tilted") === m ? "selected" : ""}>${esc(this._t(`means_${m}`))}</option>`).join("")}
@@ -967,6 +982,19 @@ class FacadeConductorPanel extends HTMLElement {
         <label class="switch"><input type="checkbox" id="f-cooling-outside" ${d.cooling_outside ? "checked" : ""}> ${esc(this._t("cooling_outside"))}</label>
         ${d.cooling_outside && !info.house.outdoor_temp ? `<div class="hint">${esc(this._t("cooling_outside_missing"))}</div>` : ""}
         <p class="muted">${esc(this._t("cooling_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("climate"))}</h3>
+        <label class="field">${esc(this._t("humidity_sensor"))}
+          ${this._combo("f-humidity", "room", "humidity_sensor", all.filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "humidity"), d.humidity_sensor)}</label>
+        <div class="positions">
+          <label class="field">${esc(this._t("insulation"))}
+            <input id="f-insulation" type="number" min="0.3" max="1" step="0.05" data-field="insulation" value="${esc(d.insulation ?? "")}" placeholder="0.7"></label>
+          <label class="field">${esc(this._t("wall_sensor"))}
+            ${this._combo("f-wall", "room", "wall_sensor", all.filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature"), d.wall_sensor)}</label>
+        </div>
+        ${!d.cooling_sensor || !info.house.outdoor_temp ? `<div class="hint">${esc(this._t("climate_missing"))}</div>` : ""}
+        <p class="muted">${esc(this._t("climate_hint"))}</p>
       </div>
       <div class="card">
         <h3>${esc(this._t("sleep"))}</h3>
@@ -1089,6 +1117,7 @@ class FacadeConductorPanel extends HTMLElement {
     );
 
     root.getElementById("l-enabled")?.addEventListener("change", (e) => saveHouse({ leave_enabled: e.target.checked }));
+    root.querySelector("[data-all-contacts]")?.addEventListener("change", (e) => ((this._allContacts = e.target.checked), this._render()));
     root.querySelectorAll("[data-leave-contact]").forEach((el) =>
       el.addEventListener("change", () =>
         saveHouse({ leave_contacts: [...root.querySelectorAll("[data-leave-contact]:checked")].map((c) => c.value) }),

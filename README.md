@@ -41,7 +41,11 @@ Auf Wunsch kommen Meldungen per Push oder Durchsage, wenn ein Rollladen nicht er
 ein Raum in Handbetrieb geht, und bei Sicherheit auch nachts. Ein nicht erreichbarer Rollladen steht
 zusätzlich bei den Reparaturen. Weht Regen ins offene Fenster, fährt der Rollladen auf einen
 Regenspalt; Jalousien stellen bei Hitze ihre Lamellen schräg und fahren bei Sturm hoch. Im Urlaub
-folgt jeder Raum dem Tagesablauf leicht versetzt, damit das Haus bewohnt wirkt.
+folgt jeder Raum dem Tagesablauf leicht versetzt, damit das Haus bewohnt wirkt. Fenster mit Griff
+oder Kippsensor kennen gekippt und ganz offen. Hinweise melden Dauerkippen bei Kälte, zu viel Hitze
+von draußen und offene Fenster beim Scharfschalten der Alarmanlage. Je Raum gibt es eine
+Lüftungsempfehlung, ein Schimmelrisiko und die nächste Fahrt. Automationen rufen Facade Conductor
+über die Aktionen `pause`, `resume`, `wake` und `alarm` auf, statt selbst zu fahren.
 
 Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Version vom November,
 `2026.11.0-beta.1` eine Beta dafür. Die Nummer sagt, wann eine Version erschien, nicht für welche
@@ -108,7 +112,10 @@ compass, per shutter in corner rooms. Optional push messages or announcements re
 shutters, manual mode and safety, the latter also at night; unreachable shutters also show up in
 Repairs. Rain blowing into an open window moves the shutter to a rain gap, venetian blinds tilt
 their slats against the sun and go up in a storm, and a vacation mode staggers each room's schedule
-so the house looks lived in. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
+so the house looks lived in. Window handles or tilt sensors tell tilted from fully open; hints report
+constant tilting in the cold, heat from outside and open windows when the alarm is armed. Each room
+gets ventilation advice, a mould risk and its next move, and automations call the actions `pause`,
+`resume`, `wake` and `alarm` instead of moving shutters themselves. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
 **Installation (beta):**
 

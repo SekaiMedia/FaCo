@@ -9,7 +9,9 @@ from homeassistant.components.frontend import DATA_PANELS, async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+import voluptuous as vol
+
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType
@@ -32,6 +34,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         [StaticPathConfig(STATIC_URL, str(Path(__file__).parent / "frontend"), False)]
     )
     websocket.async_register(hass)
+
+    async def _service(call: ServiceCall) -> None:
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            entry.runtime_data.async_service(call.service, dict(call.data))
+
+    # so ruft eine Alarmanlage oder ein Wecker Facade Conductor auf, statt selbst zu fahren
+    rooms = {vol.Optional("entity_id"): cv.entity_ids}
+    for name in ("pause", "resume", "wake"):
+        hass.services.async_register(DOMAIN, name, _service, vol.Schema(rooms))
+    position = vol.All(vol.Coerce(int), vol.Range(min=0, max=100))
+    hass.services.async_register(DOMAIN, "alarm", _service, vol.Schema({vol.Optional("position"): position}))
     return True
 
 

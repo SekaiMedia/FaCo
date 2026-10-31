@@ -23,7 +23,15 @@ from facade_engine import (  # noqa: E402
     phase_for,
     House,
     LuxFilter,
+    absolute_humidity,
     blind_tilt,
+    humidity_at,
+    mold_risk,
+    next_change,
+    rain_protect,
+    ventilation,
+    window_hint,
+    window_state,
     stand_still,
     tilt_due,
     to_kmh,
@@ -341,6 +349,77 @@ class Werkzeuge(unittest.TestCase):
         self.assertEqual(decide(RoomConfig(), alarm, nacht, current=100), Decision(0, R.SAFETY))
         tag = RoomState(window=Window.OPEN, door=True)
         self.assertEqual(decide(RoomConfig(), tag, House(Phase.DAY, 12), current=100), Decision(100, R.SCHEDULE))
+
+    def test_hitzeschutz_schnell_rein_langsam_raus(self):
+        hitze = Decision(70, R.HEAT)
+        self.assertTrue(may_move(hitze, last_auto_move=0, now=60, closing=True))  # abschatten sofort
+        self.assertFalse(may_move(hitze, last_auto_move=0, now=60, closing=False))
+        self.assertFalse(may_move(Decision(100, R.SCHEDULE), last_auto_move=0, now=60, closing=False))  # öffnen mit Ruhe
+
+    def test_nachsenden(self):
+        log = CommandLog()
+        log.sent("cover.a", 0, 25)
+        self.assertFalse(log.retry_due("cover.a", 100, 59))
+        self.assertTrue(log.retry_due("cover.a", 100, 60))  # nach einer Minute nicht angekommen
+        self.assertFalse(log.retry_due("cover.a", 100, 200))  # nur einmal
+        log.sent("cover.b", 0, 25)
+        self.assertFalse(log.retry_due("cover.b", 26, 60))  # angekommen
+        log.sent("cover.a", 300, 0)  # neues Ziel: wieder einmal erlaubt
+        self.assertTrue(log.retry_due("cover.a", 100, 360))
+
+    def test_fensterzustaende(self):
+        self.assertIs(window_state("on", None, Window.TILTED), Window.TILTED)  # einfacher Kontakt
+        self.assertIs(window_state("on", None, Window.OPEN), Window.OPEN)
+        self.assertIs(window_state("on", "off", Window.TILTED), Window.OPEN)  # mit Kippsensor: ganz offen
+        self.assertIs(window_state("on", "on", Window.OPEN), Window.TILTED)
+        self.assertIs(window_state("tilted", None, Window.OPEN), Window.TILTED)  # Griff mit drei Zuständen
+        self.assertIs(window_state("Open", None, Window.TILTED), Window.OPEN)
+        self.assertIs(window_state("closed", None, Window.OPEN), Window.CLOSED)
+        self.assertIs(window_state("off", "off", Window.OPEN), Window.CLOSED)
+        self.assertIs(window_state(None, None, Window.OPEN), Window.CLOSED)
+
+    def test_regen_je_fensterzustand(self):
+        self.assertTrue(rain_protect(Window.OPEN, True, False, True))  # ganz offen: schon leichter Regen
+        self.assertFalse(rain_protect(Window.TILTED, True, False, True))  # gekippt: erst ab der Stufe
+        self.assertTrue(rain_protect(Window.TILTED, True, True, True))
+        self.assertFalse(rain_protect(Window.OPEN, True, True, False))  # Wind von der anderen Seite
+        self.assertFalse(rain_protect(Window.CLOSED, True, True, True))
+
+    def test_naechste_fahrt(self):
+        self.assertEqual(next_change(22, 23, 7), (1, Phase.NIGHT))
+        self.assertEqual(next_change(1, 23, 7), (6, Phase.DAY))
+        self.assertEqual(next_change(12, 23, 7), (11, Phase.NIGHT))
+        self.assertEqual(next_change(23, 23, 7), (8, Phase.DAY))  # gerade begonnen: der nächste Wechsel zählt
+
+    def test_fenster_hinweise(self):
+        self.assertEqual(window_hint(Window.TILTED, 900, 5, 21, 12), "tilted_cold")
+        self.assertIsNone(window_hint(Window.TILTED, 899, 5, 21, 12))
+        self.assertEqual(window_hint(Window.OPEN, 600, 3, 21, 12), "open_cold")
+        self.assertIsNone(window_hint(Window.OPEN, 3600, 15, 21, 12))  # nicht kalt
+        self.assertEqual(window_hint(Window.OPEN, 0, 31, 25, 12), "heat")  # draußen viel wärmer
+        self.assertIsNone(window_hint(Window.OPEN, 0, 26, 25, 12))
+        self.assertIsNone(window_hint(Window.CLOSED, 9999, 0, 21, 12))
+
+    def test_lueftungsrechner(self):
+        # Werte von der Konzepttafel: draußen 8,1 °C und 99 %
+        self.assertAlmostEqual(absolute_humidity(22.7, 66), 13.3, delta=0.1)
+        self.assertAlmostEqual(absolute_humidity(8.1, 99), 8.2, delta=0.1)
+        self.assertAlmostEqual(humidity_at(absolute_humidity(22.7, 66), 22.7), 66, delta=0.01)
+        advice, after = ventilation(22.7, 66, 8.1, 99)
+        self.assertEqual(advice, "ventilate")
+        self.assertAlmostEqual(after, 41, delta=1)
+        self.assertEqual(ventilation(24, 50, 30, 60)[0], "close")  # schwüler Sommer
+        self.assertEqual(ventilation(24, 40, 18, 50)[0], "cool")  # kühler und nicht feuchter
+        self.assertEqual(ventilation(24, 40, 20, 70)[0], "neutral")  # kühler, aber mehr Wasser in der Luft
+        self.assertEqual(ventilation(20, 50, 20, 50)[0], "neutral")
+
+    def test_schimmelwarner(self):
+        level, rh = mold_risk(22.7, 66, 8.1)
+        self.assertEqual(level, "high")  # Badezimmer von der Tafel
+        self.assertAlmostEqual(rh, 85, delta=1.5)
+        self.assertEqual(mold_risk(19.1, 63, 8.1)[0], "medium")
+        self.assertEqual(mold_risk(21, 40, 8.1)[0], "low")
+        self.assertEqual(mold_risk(20, 60, 0, wall=19)[0], "low")  # gemessene Wand statt Schätzung
 
     def test_himmelsrichtung(self):
         self.assertEqual(direction_range("e"), (45, 135))

@@ -29,6 +29,11 @@ CONF_ANNOUNCE_SAFETY = "announce_safety"
 CONF_OUTDOOR_TEMP = "outdoor_temp"
 CONF_RAIN_SENSOR = "rain_sensor"
 CONF_RAIN_LEVEL = "rain_level"
+CONF_OUTDOOR_HUMIDITY = "outdoor_humidity"
+CONF_COLD_BELOW = "cold_below"
+CONF_ALARM_PANEL = "alarm_panel"
+# Ereignisse für Meldungen; je Ereignis notify_<e> für Push und announce_<e> für Durchsage
+EVENTS = ["unreachable", "manual", "safety", "rain", "window", "alarm", "climate"]
 RAIN_LEVEL_OPTIONS = ["light", "moderate", "heavy"]
 CONF_WIND_DIRECTION = "wind_direction"
 CONF_WIND_SPEED = "wind_speed"
@@ -44,6 +49,13 @@ GROUP_OPTIONS = ["house", "floor", "room"]
 CONF_AREA = "area"
 CONF_COVERS = "covers"
 CONF_WINDOW_SENSOR = "window_sensor"
+# eigener Kippsensor zum Kontakt: dann heißt Kontakt offen ohne Kippen „ganz offen“
+CONF_WINDOW_TILT = "window_tilt_sensor"
+CONF_HUMIDITY_SENSOR = "humidity_sensor"
+CONF_WALL_SENSOR = "wall_sensor"
+# Anteil des Temperaturunterschieds an der kältesten Wandstelle, 0,7 nach DIN 4108-2
+CONF_INSULATION = "insulation"
+DEFAULT_INSULATION = 0.7
 CONF_WINDOW_MEANS = "window_means"
 # Tür mit Aussperrschutz; leer heißt: ja, wenn der Kontakt eine Tür ist
 CONF_DOOR = "door"
@@ -92,7 +104,12 @@ DEFAULTS = {
     CONF_ANNOUNCE_SAFETY: False,
     CONF_OUTDOOR_TEMP: None,
     CONF_RAIN_SENSOR: None,
-    CONF_RAIN_LEVEL: "light",
+    # gekippt erst ab mäßigem Regen; ganz offene Fenster schützen schon bei leichtem
+    CONF_RAIN_LEVEL: "moderate",
+    CONF_OUTDOOR_HUMIDITY: None,
+    CONF_COLD_BELOW: 12,
+    CONF_ALARM_PANEL: None,
+    **{f"{kind}_{e}": False for kind in ("notify", "announce") for e in ("window", "alarm", "climate")},
     CONF_WIND_DIRECTION: None,
     CONF_WIND_SPEED: None,
     CONF_WIND_GUST: None,

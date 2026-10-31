@@ -1,0 +1,29 @@
+pause:
+  fields:
+    entity_id:
+      selector:
+        entity:
+          integration: facade_conductor
+          multiple: true
+resume:
+  fields:
+    entity_id:
+      selector:
+        entity:
+          integration: facade_conductor
+          multiple: true
+wake:
+  fields:
+    entity_id:
+      selector:
+        entity:
+          integration: facade_conductor
+          multiple: true
+alarm:
+  fields:
+    position:
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"

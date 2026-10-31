@@ -25,6 +25,10 @@ async def async_setup_entry(
         entities = [ReasonSensor(conductor, room), TargetSensor(conductor, room)]
         if room.window_sensor:
             entities.append(WindowSensor(conductor, room))
+        if room.covers:
+            entities.append(NextMoveSensor(conductor, room))
+        if room.humidity_sensor and room.cooling_sensor:
+            entities += [VentilationSensor(conductor, room), MoldSensor(conductor, room)]
         by_room[room.subentry_id] = entities
     remove_stale(hass, entry.entry_id, "sensor", [e for entities in by_room.values() for e in entities])
     for subentry_id, entities in by_room.items():
@@ -79,3 +83,67 @@ class WindowSensor(RoomEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         return self._room.state.window.name.lower() if self._room.state else None
+
+
+class NextMoveSensor(RoomEntity, SensorEntity):
+    """Nächste feste Fahrt: Nachtbeginn oder Nachtende, mit Ziel. Die Dämmerung hängt vom Licht ab."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, conductor: Conductor, room: Room) -> None:
+        super().__init__(conductor, room, "next_move")
+
+    @property
+    def native_value(self) -> Any:
+        return self._conductor.next_move(self._room)[0]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"position": self._conductor.next_move(self._room)[1]}
+
+
+class VentilationSensor(RoomEntity, SensorEntity):
+    """Lüftungsempfehlung aus dem Wasser in der Luft drinnen und draußen."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["ventilate", "cool", "close", "neutral"]
+
+    def __init__(self, conductor: Conductor, room: Room) -> None:
+        super().__init__(conductor, room, "ventilation")
+
+    @property
+    def available(self) -> bool:
+        return self._room.advice is not None
+
+    @property
+    def native_value(self) -> str | None:
+        return self._room.advice
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "humidity_after_airing": round(self._room.humidity_after or 0),
+            "absolute_humidity": self._room.absolute,
+        }
+
+
+class MoldSensor(RoomEntity, SensorEntity):
+    """Schimmelrisiko an der kältesten Stelle der Wand."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["low", "medium", "high"]
+
+    def __init__(self, conductor: Conductor, room: Room) -> None:
+        super().__init__(conductor, room, "mold")
+
+    @property
+    def available(self) -> bool:
+        return self._room.mold is not None
+
+    @property
+    def native_value(self) -> str | None:
+        return self._room.mold
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"humidity_cold_spot": round(self._room.humidity_spot or 0)}

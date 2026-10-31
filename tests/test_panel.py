@@ -45,6 +45,7 @@ class Einstellungsseite(unittest.TestCase):
         self.assertEqual(_js_list("POSITIONS"), list(_const("POSITION_KEYS")))
         self.assertEqual(_js_list("GROUPS"), _const("GROUP_OPTIONS"))
         self.assertEqual(_js_list("WINDOW_CLASSES"), _const("WINDOW_CLASSES"))
+        self.assertEqual(_js_list("EVENTS"), _const("EVENTS"))
         self.assertTrue(set(_js_list("DOOR_CLASSES")) <= set(_const("WINDOW_CLASSES")))
 
     def test_jeder_reiter_hat_seite(self):
@@ -124,7 +125,7 @@ class Einstellungsseite(unittest.TestCase):
         used |= {f"phase_{p}" for p in ("day", "dusk", "night")}
         used |= {f"group_{g}" for g in _js_list("GROUPS")}
         used |= {f"alias_{g}" for g in _js_list("GROUPS")}
-        used |= {f"msg_{e}{x}" for e in ("unreachable", "manual", "safety", "rain") for x in ("", "_long")}
+        used |= {f"msg_{e}{x}" for e in _js_list("EVENTS") for x in ("", "_long")}
         used |= {f"rain_{x}" for x in _const("RAIN_LEVEL_OPTIONS")}
         self.assertGreater(len(used), 40)
         for lang in ("de", "en"):

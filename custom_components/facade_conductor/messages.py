@@ -1,8 +1,9 @@
-"""Meldungen: Rollladen nicht erreichbar, Handbetrieb mit Knopf „Automatik fortsetzen“, Sicherheit.
+"""Meldungen per Push und Durchsage, je Ereignis wählbar.
 
 Push geht an die Handys des Haushalts, wie bei der Warnung beim Verlassen. Durchsagen gehen an den
 Lautsprecher des Raums, sonst an den des Hauses, und schweigen nachts und solange jemand schläft,
-außer bei Sicherheit. Ein nicht erreichbarer Rollladen steht zusätzlich bei den Reparaturen.
+außer bei Sicherheit. Jede Push-Meldung hat „Heute nicht mehr melden“, ein nicht erreichbarer
+Rollladen zusätzlich „Erneut versuchen“ und einen Eintrag bei den Reparaturen.
 """
 
 from __future__ import annotations
@@ -10,24 +11,15 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 
-from .const import (
-    CONF_ANNOUNCE_MANUAL,
-    CONF_ANNOUNCE_RAIN,
-    CONF_ANNOUNCE_SAFETY,
-    CONF_ANNOUNCE_UNREACHABLE,
-    CONF_NOTIFY_MANUAL,
-    CONF_NOTIFY_RAIN,
-    CONF_NOTIFY_SAFETY,
-    CONF_NOTIFY_UNREACHABLE,
-    CONF_SPEAKER,
-    DOMAIN,
-)
+from .const import CONF_SPEAKER, DOMAIN, EVENTS
 from .engine import due_unreachable, may_announce
 from .leave import async_notify, phones
 
@@ -37,23 +29,49 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 ACTION_RESUME = "FACO_RESUME_"
+ACTION_RETRY = "FACO_RETRY_"
+ACTION_MUTE = "FACO_MUTE_"
 
 TEXTS = {
     "de": {
         "unreachable": "{room}: {cover} ist seit 15 Minuten nicht erreichbar.",
         "manual": "{room}: Handbetrieb bis zur nächsten Tagesphase.",
         "resume": "Automatik fortsetzen",
+        "retry": "Erneut versuchen",
+        "mute": "Heute nicht mehr melden",
         "safety": "Sicherheit: {trigger}. Die Rollläden fahren auf {position} Prozent.",
         "rain_door": "{room}: Regen auf die offene Tür.",
+        "rain_window": "{room}: Regen auf das offene Fenster.",
+        "tilted_cold": "{room}: Das Fenster ist seit 15 Minuten gekippt. Dauerkippen kostet Heizung, lieber kurz ganz öffnen.",
+        "open_cold": "{room}: Das Fenster ist seit 10 Minuten offen, draußen {outside} Grad. Stoßlüften reicht.",
+        "heat": "{room}: Draußen {outside} Grad, drinnen {inside} Grad. Fenster besser schließen.",
+        "alarm": "Alarm scharf, noch offen: {names}.",
+        "humid": "{room}: Seit 2 Stunden über 65 Prozent Feuchte. Jetzt lüften, draußen ist es trockener.",
+        "humid_open": "{room}: Fenster offen, aber draußen ist es schwül. Fenster zu.",
+        "mold": "{room}: Schimmelgefahr an der kältesten Stelle. Jetzt lüften.",
     },
     "en": {
         "unreachable": "{room}: {cover} has been unreachable for 15 minutes.",
         "manual": "{room}: manual mode until the next phase of the day.",
         "resume": "Resume automatic",
+        "retry": "Try again",
+        "mute": "Not again today",
         "safety": "Safety: {trigger}. The shutters move to {position} percent.",
         "rain_door": "{room}: rain on the open door.",
+        "rain_window": "{room}: rain on the open window.",
+        "tilted_cold": "{room}: the window has been tilted for 15 minutes. Constant tilting costs heating, better open it fully for a short time.",
+        "open_cold": "{room}: the window has been open for 10 minutes, {outside} degrees outside. A short airing is enough.",
+        "heat": "{room}: {outside} degrees outside, {inside} degrees inside. Better close the window.",
+        "alarm": "Alarm armed, still open: {names}.",
+        "humid": "{room}: above 65 percent humidity for 2 hours. Air now, it is drier outside.",
+        "humid_open": "{room}: window open, but it is humid outside. Close the window.",
+        "mold": "{room}: risk of mould at the coldest spot. Air now.",
     },
 }
+
+# welcher Text zu welchem Ereignis gehört, für die Wahl Push oder Durchsage
+HINT_EVENT = {"tilted_cold": "window", "open_cold": "window", "heat": "window", "humid": "climate",
+              "humid_open": "climate", "mold": "climate"}
 
 
 class Messages:
@@ -64,26 +82,23 @@ class Messages:
         persons: Callable[[], list[str]],
         resume: Callable[[str], None],
         quiet: Callable[[], bool],
+        retry: Callable[[str], None],
     ) -> None:
         self.hass = hass
-        self.unreachable = bool(house[CONF_NOTIFY_UNREACHABLE])
-        self.manual = bool(house[CONF_NOTIFY_MANUAL])
-        self.say_unreachable = bool(house[CONF_ANNOUNCE_UNREACHABLE])
-        self.say_manual = bool(house[CONF_ANNOUNCE_MANUAL])
-        self.safety = bool(house[CONF_NOTIFY_SAFETY])
-        self.say_safety = bool(house[CONF_ANNOUNCE_SAFETY])
-        self.rain = bool(house[CONF_NOTIFY_RAIN])
-        self.say_rain = bool(house[CONF_ANNOUNCE_RAIN])
+        self.push = {e: bool(house.get(f"notify_{e}")) for e in EVENTS}
+        self.say = {e: bool(house.get(f"announce_{e}")) for e in EVENTS}
         self.speaker = house.get(CONF_SPEAKER)
         self._quiet = quiet
         self._said: dict[str, float] = {}
         self._persons = persons
         self._resume = resume
+        self._retry = retry
         self._down: dict[str, float] = {}
         self._sent: set[str] = set()
+        self._muted: dict[str, date] = {}
         self._unsub: CALLBACK_TYPE | None = None
 
-    def _text(self, key: str, **values: str) -> str:
+    def _text(self, key: str, **values: Any) -> str:
         lang = "de" if (self.hass.config.language or "").startswith("de") else "en"
         return TEXTS[lang][key].format(**values)
 
@@ -94,14 +109,13 @@ class Messages:
         for domain, issue_id in list(ir.async_get(self.hass).issues):
             if domain == DOMAIN and issue_id.startswith("unreachable_") and issue_id[12:] not in self._sent:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-        if self.manual:
-            self._unsub = self.hass.bus.async_listen("mobile_app_notification_action", self._on_action)
+        self._unsub = self.hass.bus.async_listen("mobile_app_notification_action", self._on_action)
 
-    def kept(self) -> tuple[dict[str, float], set[str]]:
-        return self._down, self._sent
+    def kept(self) -> tuple[dict[str, float], set[str], dict[str, date]]:
+        return self._down, self._sent, self._muted
 
-    def restore(self, kept: tuple[dict[str, float], set[str]]) -> None:
-        self._down, self._sent = kept
+    def restore(self, kept: tuple[dict[str, float], set[str], dict[str, date]]) -> None:
+        self._down, self._sent, self._muted = kept
 
     @callback
     def async_stop(self) -> None:
@@ -114,6 +128,10 @@ class Messages:
         action = event.data.get("action") or ""
         if action.startswith(ACTION_RESUME):
             self._resume(action.removeprefix(ACTION_RESUME))
+        elif action.startswith(ACTION_RETRY):
+            self._retry(action.removeprefix(ACTION_RETRY))
+        elif action.startswith(ACTION_MUTE):
+            self._muted[action.removeprefix(ACTION_MUTE)] = dt_util.now().date()
 
     async def _send(self, message: str, data: dict[str, Any]) -> None:
         for service in (s for p in self._persons() for s in phones(self.hass, p)):
@@ -128,6 +146,29 @@ class Messages:
             )
         except Exception:  # noqa: BLE001 - ein stummer Lautsprecher darf den Takt nicht aufhalten
             _LOGGER.warning("Durchsage an %s fehlgeschlagen", target)
+
+    async def async_event(
+        self,
+        event: str,
+        text: str,
+        tag: str,
+        speaker: str | None = None,
+        actions: list[dict[str, str]] | None = None,
+        urgent: bool = False,
+    ) -> None:
+        """Eine Meldung als Push und/oder Durchsage, je nachdem, was für dieses Ereignis gewählt ist."""
+        if self._muted.get(tag) == dt_util.now().date():
+            return
+        if self.push[event]:
+            buttons = list(actions or [])
+            data: dict[str, Any] = {"tag": tag}
+            if urgent:
+                data |= {"priority": "high", "ttl": 0}
+            else:
+                buttons.append({"action": f"{ACTION_MUTE}{tag}", "title": self._text("mute")})
+            await self._send(text, data | {"actions": buttons})
+        if self.say[event]:
+            await self._say(speaker or self.speaker, text, tag, urgent)
 
     async def async_check(self, rooms: list[Room], now: float) -> None:
         owner = {c: room for room in rooms for c in room.covers}
@@ -148,38 +189,37 @@ class Messages:
                 translation_key="unreachable",
                 translation_placeholders={"cover": name, "room": owner[cover].name},
             )
-            text = self._text("unreachable", room=owner[cover].name, cover=name)
-            if self.unreachable:
-                await self._send(text, {"tag": f"faco_{cover}"})
-            if self.say_unreachable:
-                await self._say(owner[cover].speaker or self.speaker, text, f"unreachable_{cover}")
+            await self.async_event(
+                "unreachable",
+                self._text("unreachable", room=owner[cover].name, cover=name),
+                f"faco_{cover}",
+                owner[cover].speaker,
+                [{"action": f"{ACTION_RETRY}{cover}", "title": self._text("retry")}],
+            )
 
     async def async_manual(self, room: Room) -> None:
-        if self.say_manual:
-            await self._say(room.speaker or self.speaker, self._text("manual", room=room.name), f"manual_{room.subentry_id}")
-        if not self.manual:
-            return
-        await self._send(
+        await self.async_event(
+            "manual",
             self._text("manual", room=room.name),
-            {
-                "tag": f"faco_manual_{room.subentry_id}",
-                "actions": [{"action": f"{ACTION_RESUME}{room.subentry_id}", "title": self._text("resume")}],
-            },
+            f"faco_manual_{room.subentry_id}",
+            room.speaker,
+            [{"action": f"{ACTION_RESUME}{room.subentry_id}", "title": self._text("resume")}],
         )
 
     async def async_safety(self, trigger: str, position: int) -> None:
         """Ein Sicherheits-Auslöser fährt die Rollläden; die Durchsage kommt auch nachts."""
         state = self.hass.states.get(trigger)
-        text = self._text("safety", trigger=state.name if state else trigger, position=str(position))
-        if self.safety:
-            await self._send(text, {"tag": "faco_safety", "priority": "high", "ttl": 0})
-        if self.say_safety:
-            await self._say(self.speaker, text, f"safety_{trigger}", urgent=True)
+        text = self._text("safety", trigger=state.name if state else trigger, position=position)
+        await self.async_event("safety", text, f"faco_safety_{trigger}", urgent=True)
 
-    async def async_rain_door(self, room: Room) -> None:
-        """Türen fahren bei Regen nicht unter die Durchgangshöhe, stattdessen kommt diese Meldung."""
-        text = self._text("rain_door", room=room.name)
-        if self.rain:
-            await self._send(text, {"tag": f"faco_rain_{room.subentry_id}"})
-        if self.say_rain:
-            await self._say(room.speaker or self.speaker, text, f"rain_{room.subentry_id}")
+    async def async_rain(self, room: Room, door: bool) -> None:
+        """Türen fahren bei Regen nicht unter die Durchgangshöhe; ganz offene Fenster melden zusätzlich."""
+        text = self._text("rain_door" if door else "rain_window", room=room.name)
+        await self.async_event("rain", text, f"faco_rain_{room.subentry_id}", room.speaker)
+
+    async def async_hint(self, room: Room, hint: str, **values: Any) -> None:
+        text = self._text(hint, room=room.name, **values)
+        await self.async_event(HINT_EVENT[hint], text, f"faco_{hint}_{room.subentry_id}", room.speaker)
+
+    async def async_alarm(self, names: list[str]) -> None:
+        await self.async_event("alarm", self._text("alarm", names=", ".join(names)), "faco_alarm")
