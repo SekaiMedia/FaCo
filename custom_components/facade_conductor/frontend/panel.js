@@ -13,6 +13,8 @@ const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade", "rain"];
 const WINDOW_CLASSES = ["window", "door", "opening", "garage_door"];
+// davon Türen: Aussperrschutz ist dort vorgewählt
+const DOOR_CLASSES = ["door", "garage_door"];
 const REASON_COLOR = {
   schedule: "var(--info-color, #039be5)",
   evening_cooling: "var(--info-color, #039be5)",
@@ -21,6 +23,7 @@ const REASON_COLOR = {
   window_open: "var(--success-color, #43a047)",
   sleep: "var(--secondary-text-color)",
   manual: "var(--primary-text-color)",
+  lockout_protection: "var(--success-color, #43a047)",
   safety: "var(--error-color, #db4437)",
   frost: "var(--info-color, #039be5)",
   rain_protection: "var(--info-color, #039be5)",
@@ -61,6 +64,9 @@ const words = (s) =>
     .sort()
     .join(" ");
 const sameName = (a, b) => words(a) === words(b);
+// leeres Feld heißt „kein Wert“
+const num = (v) => (v === undefined || v === "" ? null : Number(v));
+const splitList = (text) => (text || "").split(",").map((x) => x.trim()).filter(Boolean);
 const COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -165,6 +171,8 @@ class FacadeConductorPanel extends HTMLElement {
       info = await this._hass.callWS({ type: "facade_conductor/info" });
     } catch (err) {
       error = err.message || err.code || String(err);
+      // etwa während des Neuladens nach dem Speichern: einmal kurz danach erneut fragen
+      if (!this._error) this._reloadSoon();
     }
     // nur neu zeichnen, wenn sich etwas Sichtbares geändert hat, sonst springt der Cursor
     const windows = (info?.rooms || []).map((r) => this._stateText(r.data.window_sensor)).join("|");
@@ -192,13 +200,22 @@ class FacadeConductorPanel extends HTMLElement {
       return result;
     } catch (err) {
       this._flash(this._t("error", { msg: err.message || err.code }));
+      // die Anzeige wurde schon vorab geändert; den echten Stand neu holen
+      this._key = null;
+      this._load();
       return null;
     }
   }
 
   _flash(text) {
     this._toast = text;
-    this._render();
+    if (this._typing) {
+      // neu zeichnen nähme die gerade getippte Eingabe mit
+      this.shadowRoot.querySelector(".toast")?.remove();
+      const toast = Object.assign(document.createElement("div"), { className: "toast", textContent: text });
+      toast.setAttribute("role", "status");
+      this.shadowRoot.append(toast);
+    } else this._render();
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => ((this._toast = ""), this.shadowRoot.querySelector(".toast")?.remove()), 2500);
   }
@@ -289,7 +306,7 @@ class FacadeConductorPanel extends HTMLElement {
 
   _housePos(key) {
     return `<input id="hp-${key}" class="pct" type="number" min="0" max="100" step="1" data-hpos="${key}"
-      aria-label="${esc(this._t(`pos_${key}`))}" value="${this._info.positions[key]}">`;
+      aria-label="${esc(this._t(`pos_${key}`))}" value="${esc(this._info.positions[key])}">`;
   }
 
   // Einstellungen des Hauses: einklappbare Rubriken, der Kopf zeigt die aktuellen Werte
@@ -345,7 +362,7 @@ class FacadeConductorPanel extends HTMLElement {
     const excluded = new Set(h.leave_exclude_persons || []);
     const contacts = [
       ...new Set([
-        ...this._all.filter((id) => id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id].attributes.device_class)),
+        ...this._all.filter((id) => this._isContact(id)),
         ...chosen,
       ]),
     ]
@@ -483,14 +500,14 @@ class FacadeConductorPanel extends HTMLElement {
     const lux = this._all.filter(
       (id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "illuminance",
     );
-    const num = (key) => this._houseInput(key, 'type="number" min="0" max="100000" step="50"');
+    const luxInput = (key) => this._houseInput(key, 'type="number" min="0" max="100000" step="50"');
     return [
       this._t("sum_daylight", { sensor: h.lux_sensor ? this._name(h.lux_sensor) : this._t("sun_position"), dark: h.lux_dark }),
       `<label class="field">${esc(this._t("lux_sensor"))}
          ${this._combo("h-lux_sensor", "house", "lux_sensor", lux, h.lux_sensor)}</label>
        <div class="positions">
-         <label class="field">${esc(this._t("lux_dark"))} ${num("lux_dark")}</label>
-         <label class="field">${esc(this._t("lux_bright"))} ${num("lux_bright")}</label>
+         <label class="field">${esc(this._t("lux_dark"))} ${luxInput("lux_dark")}</label>
+         <label class="field">${esc(this._t("lux_bright"))} ${luxInput("lux_bright")}</label>
        </div>
        <p class="muted">${esc(this._t("daylight_hint"))}</p>`,
     ];
@@ -504,7 +521,7 @@ class FacadeConductorPanel extends HTMLElement {
       (id) =>
         (id.startsWith("sensor.") && ["precipitation_intensity", "precipitation"].includes(this._hass.states[id].attributes.device_class)) ||
         (id.startsWith("binary_sensor.") && this._hass.states[id].attributes.device_class === "moisture") ||
-        /rain|regen/.test(id),
+        (/^(binary_)?sensor\./.test(id) && /rain|regen/.test(id)),
     );
     const directions = this._all.filter((id) => id.startsWith("sensor.") && /wind.*(dir|richtung)|bearing/.test(id));
     const on = [
@@ -814,6 +831,10 @@ class FacadeConductorPanel extends HTMLElement {
     else start();
   }
 
+  _isContact(id) {
+    return id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id]?.attributes.device_class);
+  }
+
   _leaveRoom() {
     this._compassStop();
     this._map = null;
@@ -837,10 +858,12 @@ class FacadeConductorPanel extends HTMLElement {
       );
     const chosen = new Set(d.covers || []);
     const windows = all.filter(
-      (id) => id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id].attributes.device_class),
+      (id) => this._isContact(id),
     );
     const sleepers = all.filter(
-      (id) => /^(binary_sensor|input_boolean|switch)\./.test(id) || this._hass.states[id].attributes.device_class === "power",
+      (id) =>
+        /^(binary_sensor|input_boolean|switch)\./.test(id) ||
+        (id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "power"),
     );
     const own = d.positions || {};
     const pause = d.advanced || {};
@@ -877,6 +900,8 @@ class FacadeConductorPanel extends HTMLElement {
             ${["tilted", "open"].map((m) => `<option value="${m}" ${(d.window_means || "tilted") === m ? "selected" : ""}>${esc(this._t(`means_${m}`))}</option>`).join("")}
           </select></label>
         <p class="muted">${esc(this._t("window_means_hint"))}</p>
+        <label class="switch"><input type="checkbox" id="f-door" ${(d.door ?? DOOR_CLASSES.includes(this._hass.states[d.window_sensor]?.attributes.device_class)) ? "checked" : ""}> ${esc(this._t("door_protect"))}</label>
+        <p class="muted">${esc(this._t("door_protect_hint"))}</p>
       </div>
       <div class="card">
         <h3>${esc(this._t("situations"))}</h3>
@@ -994,7 +1019,7 @@ class FacadeConductorPanel extends HTMLElement {
           ${POSITIONS.map(
             (k) => `<label class="field">${esc(this._t(`pos_${k}`))}
               <input id="f-pos-${k}" type="number" min="0" max="100" step="1" data-pos="${k}"
-                value="${own[k] ?? ""}" placeholder="${esc(this._t("like_house", { v: info.positions[k] }))}"></label>`,
+                value="${esc(own[k])}" placeholder="${esc(this._t("like_house", { v: info.positions[k] }))}"></label>`,
           ).join("")}
         </div>
       </div>
@@ -1030,12 +1055,17 @@ class FacadeConductorPanel extends HTMLElement {
       const area = root.getElementById("add-area").value;
       if (!area) return;
       const result = await this._call({ type: "facade_conductor/room/add", area });
-      if (result) this._room = result.id;
+      if (result) {
+        this._leaveRoom();
+        this._room = result.id;
+      }
     });
     root.querySelector("[data-action=remove]")?.addEventListener("click", () => {
       const room = this._info.rooms.find((r) => r.id === this._room);
-      if (room && confirm(this._t("confirm_remove", { name: room.name })))
+      if (room && confirm(this._t("confirm_remove", { name: room.name }))) {
+        this._leaveRoom();
         this._call({ type: "facade_conductor/room/remove", room_id: room.id });
+      }
     });
 
     const saveHouse = (changes) => {
@@ -1105,10 +1135,10 @@ class FacadeConductorPanel extends HTMLElement {
     root.getElementById("s-states")?.addEventListener("input", (e) => (this._draft.states = e.target.value));
     root.getElementById("s-pos")?.addEventListener("input", (e) => (this._draft.position = e.target.value));
     root.querySelector("[data-action=sit-add]")?.addEventListener("click", () => {
-      const states = (this._draft.states || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const states = splitList(this._draft.states);
       if (!this._draft.situation || !states.length) return this._flash(this._t("situation_incomplete"));
       const room = this._info.rooms.find((r) => r.id === this._room);
-      const position = this._draft.position === undefined || this._draft.position === "" ? null : Number(this._draft.position);
+      const position = num(this._draft.position);
       const entity = this._draft.situation;
       this._draft = {};
       save({ situations: [...(room.data.situations || []), { entity, states, position }] });
@@ -1116,9 +1146,8 @@ class FacadeConductorPanel extends HTMLElement {
     root.getElementById("x-states")?.addEventListener("input", (e) => (this._draft.xstates = e.target.value));
     root.getElementById("x-home")?.addEventListener("input", (e) => (this._draft.home = e.target.value));
     root.getElementById("x-away")?.addEventListener("input", (e) => (this._draft.away = e.target.value));
-    const num = (v) => (v === undefined || v === "" ? null : Number(v));
     root.querySelector("[data-action=safety-add]")?.addEventListener("click", () => {
-      const states = (this._draft.xstates || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const states = splitList(this._draft.xstates);
       if (!this._draft.safety || !states.length) return this._flash(this._t("situation_incomplete"));
       const trigger = { entity: this._draft.safety, states, home: num(this._draft.home), away: num(this._draft.away) };
       this._draft = {};
@@ -1167,6 +1196,7 @@ class FacadeConductorPanel extends HTMLElement {
     root.querySelector("[data-vacation]")?.addEventListener("change", (e) =>
       this._service("switch", e.target.checked ? "turn_on" : "turn_off", { entity_id: this._info.vacation_entity }, 1000),
     );
+    root.getElementById("f-door")?.addEventListener("change", (e) => save({ door: e.target.checked }));
     root.getElementById("f-cooling-outside")?.addEventListener("change", (e) => save({ cooling_outside: e.target.checked }));
     root.querySelectorAll("[data-cover-dir]").forEach((el) =>
       el.addEventListener("change", () => {
@@ -1186,7 +1216,7 @@ class FacadeConductorPanel extends HTMLElement {
     };
     root.querySelectorAll("[data-alias]").forEach((el) =>
       el.addEventListener("change", () =>
-        saveAliases(el.dataset.alias, el.value.split(",").map((a) => a.trim()).filter(Boolean)),
+        saveAliases(el.dataset.alias, splitList(el.value)),
       ),
     );
     root.querySelectorAll("[data-alias-add]").forEach((el) =>
@@ -1221,7 +1251,7 @@ class FacadeConductorPanel extends HTMLElement {
     root.querySelectorAll("[data-pos]").forEach((el) =>
       el.addEventListener("change", () => {
         const positions = {};
-        root.querySelectorAll("[data-pos]").forEach((p) => (positions[p.dataset.pos] = p.value === "" ? null : Number(p.value)));
+        root.querySelectorAll("[data-pos]").forEach((p) => (positions[p.dataset.pos] = num(p.value)));
         save({ positions });
       }),
     );

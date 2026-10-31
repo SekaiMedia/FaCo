@@ -11,10 +11,10 @@ Raum nacheinander raus, Automationen überschreiben sich gegenseitig, und nieman
 ein Rollladen gerade so steht. Facade Conductor ersetzt diese Automationen durch eine feste
 Rangfolge je Raum:
 
-1. Sicherheit (Alarm, Rauch, Stromausfall, Schutz vor Wind und Frost)
+1. Sicherheit (Alarm, Rauch, Stromausfall, Schutz vor Wind und Frost, Aussperrschutz an offenen Türen)
 2. Handbetrieb
 3. Fenster gekippt oder offen
-4. Situationen managen, etwa Fernseher an, Kinomodus, Sturm, Regenseite, Schlafen und mehr
+4. Situationen managen, etwa Fernseher an, Kinomodus und mehr
 5. Schlafen
 6. Hitzeschutz
 7. Tagesablauf
@@ -89,8 +89,8 @@ One controller for shutters, curtains and windows in Home Assistant.
 
 **Why:** Separate automations send commands room by room, overwrite each other and never
 tell you why a shutter is where it is. Facade Conductor replaces them with a fixed priority
-per room (safety, manual, window, situations such as TV on, cinema mode, storm, rain side,
-sleep and more, heat protection, daily schedule), decides
+per room (safety including lockout protection at open doors, manual, window, situations such as TV on or cinema mode,
+sleep, heat protection, daily schedule), decides
 all rooms in the same cycle, moves matching targets at the same time and exposes the reason
 as an entity.
 

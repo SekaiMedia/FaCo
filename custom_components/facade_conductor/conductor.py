@@ -31,6 +31,7 @@ from .const import (
     CONF_COVER_DIRECTIONS,
     CONF_COVERS,
     CONF_DIRECTION,
+    CONF_DOOR,
     CONF_DIRECTION_DEG,
     CONF_HOT_TEMPERATURE,
     CONF_LUX_BRIGHT,
@@ -120,6 +121,12 @@ from .messages import Messages
 
 _LOGGER = logging.getLogger(__name__)
 SUN = "sun.sun"
+# Speichern im Panel lädt die Integration neu. Was der Takt sich gemerkt hat, soll das überstehen:
+# sonst endet der Handbetrieb, ein gefrorener Rollladen fährt, ein geweckter Raum schließt wieder.
+KEEP_HOUSE = ("phase", "_phase_changed", "frost", "_last_rain", "_last_heavy", "wind", "_last_strong",
+              "_away_since", "_log", "_tilt_sent")
+KEEP_ROOM = ("manual", "manual_hold", "last_auto_move", "woken_until", "rain_warned", "vacation_phase", "warm",
+             "last_asleep", "situation", "held")
 
 
 def _hours(value: str | None) -> float | None:
@@ -152,6 +159,7 @@ class Room:
     cover_azimuth: dict[str, tuple[float, float]] = field(default_factory=dict)  # Eckzimmer
     facing: float | None = None  # Blickrichtung des Fensters in Grad, für Regen
     rain_warned: bool = False  # Regen auf offene Tür schon gemeldet
+    door: bool | None = None  # Tür mit Aussperrschutz; None: nach der Geräteklasse des Kontakts
     vacation_phase: Phase | None = None
     wake_sensor: str | None = None
     wake_lead: float = 0
@@ -204,14 +212,13 @@ class Conductor:
             for sub in entry.subentries.values()
             if sub.subentry_type == SUBENTRY_ROOM
         ]
-        # Speichern im Panel lädt neu: Handbetrieb, Ruhezeit und eigene Befehle sollen das überstehen
-        kept = hass.data.get(DOMAIN, {}).pop("kept", None)
-        if kept:
-            self._log, self._tilt_sent = kept["log"], kept["tilt"]
+        if kept := hass.data.get(DOMAIN, {}).pop("kept", None):
+            for name in KEEP_HOUSE:
+                setattr(self, name, kept["house"][name])
             for room in self.rooms:
-                room.manual, room.manual_hold, room.last_auto_move = kept["rooms"].get(
-                    room.subentry_id, (None, False, None)
-                )
+                for name, value in kept["rooms"].get(room.subentry_id, {}).items():
+                    setattr(room, name, value)
+            self.messages.restore(kept["messages"])
 
     def _room(self, subentry_id: str, name: str, data: dict[str, Any]) -> Room:
         overrides = {k: v for k, v in data.get(CONF_POSITIONS, {}).items() if v is not None}
@@ -247,6 +254,7 @@ class Conductor:
             if data.get(CONF_DIRECTION_DEG) is not None
             else DIRECTIONS.get(direction),
             speaker=data.get(CONF_SPEAKER),
+            door=data.get(CONF_DOOR),
             wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
             sleep_watts=float(data.get(CONF_SLEEP_WATTS) or DEFAULT_SLEEP_WATTS)
             if (data.get(CONF_SLEEP_SENSOR) or "").startswith("sensor.")
@@ -284,9 +292,9 @@ class Conductor:
     @callback
     def async_stop(self) -> None:
         self.hass.data.setdefault(DOMAIN, {})["kept"] = {
-            "log": self._log,
-            "tilt": self._tilt_sent,
-            "rooms": {r.subentry_id: (r.manual, r.manual_hold, r.last_auto_move) for r in self.rooms},
+            "house": {name: getattr(self, name) for name in KEEP_HOUSE},
+            "rooms": {r.subentry_id: {name: getattr(r, name) for name in KEEP_ROOM} for r in self.rooms},
+            "messages": self.messages.kept(),
         }
         self.leave.async_stop()
         self.messages.async_stop()
@@ -351,6 +359,14 @@ class Conductor:
     @callback
     def _on_state(self, event: Event[EventStateChangedData]) -> None:
         entity_id = event.data["entity_id"]
+        if entity_id == self.house.get(CONF_WIND_GUST) and not self.wind:
+            # Böen ändern sich ständig; neu gerechnet wird nur, wenn gerade ein Sturm beginnt
+            storm, self._last_strong = wind_step(
+                self._last_strong, self._kmh(CONF_WIND_GUST), float(self.house[CONF_WIND_LIMIT]), time.monotonic()
+            )
+            if storm:
+                self._schedule()
+            return
         if entity_id in self._slow:
             return
         # Im Probelauf fährt FaCo nie selbst, jede Fahrt käme von alten Automationen und wäre kein Handbetrieb
@@ -461,6 +477,8 @@ class Conductor:
         )
 
     def _door(self, room: Room) -> bool:
+        if room.door is not None:
+            return room.door
         state = self.hass.states.get(room.window_sensor) if room.window_sensor else None
         return state is not None and state.attributes.get("device_class") in ("door", "garage_door")
 
@@ -545,6 +563,7 @@ class Conductor:
             )
             room.state = RoomState(
                 window=self._window(room),
+                door=self._door(room),
                 asleep=self._asleep(room) and room.woken_until is None,
                 warm=self._warm(room),
                 manual=room.manual,
@@ -553,7 +572,7 @@ class Conductor:
                 wind=self.wind and any(self._blind(c) for c in room.covers),
             )
             facing_rain = wet_now and rain_in(room.facing, wind_from, wind_speed)
-            if self._door(room):
+            if room.state.door:
                 # Türen nie unter die Durchgangshöhe, stattdessen eine Meldung
                 if facing_rain and room.state.window is not Window.CLOSED and not room.rain_warned:
                     if self.mode != MODE_OFF:

@@ -34,6 +34,7 @@ from .const import (
     CONF_COVERS,
     CONF_DIRECTION,
     CONF_DIRECTION_DEG,
+    CONF_DOOR,
     CONF_GROUPS,
     CONF_HOT_TEMPERATURE,
     CONF_LEAVE_CONTACTS,
@@ -74,17 +75,19 @@ from .const import (
     CONF_WINDOW_MEANS,
     CONF_WINDOW_SENSOR,
     DEFAULT_POSITIONS,
+    DEFAULTS,
     DIRECTION_OPTIONS,
     DOMAIN,
     GROUP_OPTIONS,
     POSITION_KEYS,
     RAIN_LEVEL_OPTIONS,
     SUBENTRY_ROOM,
+    WINDOW_CLASSES,
     WINDOW_MEANS_OPTIONS,
 )
 from .leave import phones
 
-TIME_TEXT = vol.Match(r"^\d{2}:\d{2}(:\d{2})?$")
+TIME_TEXT = vol.Match(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
 PERCENT = vol.All(vol.Coerce(int), vol.Range(min=0, max=100))
 
 ROOM_CHANGES = vol.Schema(
@@ -92,6 +95,7 @@ ROOM_CHANGES = vol.Schema(
         vol.Optional(CONF_COVERS): vol.All(cv.ensure_list, [cv.entity_domain("cover")]),
         vol.Optional(CONF_WINDOW_SENSOR): vol.Any(None, cv.entity_domain("binary_sensor")),
         vol.Optional(CONF_WINDOW_MEANS): vol.In(WINDOW_MEANS_OPTIONS),
+        vol.Optional(CONF_DOOR): vol.Any(None, bool),
         vol.Optional(CONF_SLEEP_SENSOR): vol.Any(None, cv.entity_domain(["binary_sensor", "input_boolean", "sensor", "switch"])),
         vol.Optional(CONF_SLEEP_WATTS): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=3000))),
         vol.Optional(CONF_SLEEP_WAKE_MINUTES): vol.Any(None, vol.All(vol.Coerce(int), vol.Range(min=0, max=120))),
@@ -280,7 +284,8 @@ def ws_house_update(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     if (entry := _entry(hass, connection, msg)) is None:
         return
     changes = dict(msg["changes"])
-    current = entry.runtime_data.house
+    # gespeicherter Stand statt Laufzeit: während des Neuladens nach dem letzten Speichern ist die noch alt
+    current = {**DEFAULTS, **entry.data, **entry.options}
     if CONF_POSITIONS in changes:
         changes[CONF_POSITIONS] = {**current.get(CONF_POSITIONS, {}), **changes[CONF_POSITIONS]}
     merged = {**current, **changes}
@@ -342,7 +347,7 @@ def ws_room_add(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
     if any(s.data.get(CONF_AREA) == area.id for s in entry.subentries.values()):
         connection.send_error(msg["id"], "already_configured", "Für diesen Bereich gibt es schon einen Raum")
         return
-    windows = _area_entities(hass, area.id, "binary_sensor", {"window", "door", "opening"})
+    windows = _area_entities(hass, area.id, "binary_sensor", set(WINDOW_CLASSES))
     data = {
         CONF_AREA: area.id,
         CONF_COVERS: _area_entities(hass, area.id, "cover"),

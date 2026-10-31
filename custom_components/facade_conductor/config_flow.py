@@ -29,6 +29,7 @@ from .const import (
     CONF_AREA,
     CONF_COVERS,
     CONF_DIRECTION,
+    CONF_DIRECTION_DEG,
     CONF_HOT_TEMPERATURE,
     CONF_LUX_BRIGHT,
     CONF_LUX_DARK,
@@ -49,6 +50,7 @@ from .const import (
     DOMAIN,
     POSITION_KEYS,
     SUBENTRY_ROOM,
+    WINDOW_CLASSES,
     WINDOW_MEANS_OPTIONS,
 )
 
@@ -140,9 +142,14 @@ class HouseOptionsFlow(OptionsFlow):
         return self.async_show_form(step_id="heat", data_schema=schema)
 
     async def async_step_daylight(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self._save({CONF_LUX_SENSOR: user_input.get(CONF_LUX_SENSOR), **user_input})
-        v = self._current()
+            # sonst wechselt der Tag zwischen beiden Werten alle paar Minuten hin und her
+            if user_input[CONF_LUX_DARK] >= user_input[CONF_LUX_BRIGHT]:
+                errors["base"] = "lux_order"
+            else:
+                return self._save({CONF_LUX_SENSOR: user_input.get(CONF_LUX_SENSOR), **user_input})
+        v = {**self._current(), **(user_input or {})}
         schema = vol.Schema(
             {
                 _optional(CONF_LUX_SENSOR, v): _entity("sensor", device_class="illuminance"),
@@ -150,7 +157,7 @@ class HouseOptionsFlow(OptionsFlow):
                 vol.Required(CONF_LUX_BRIGHT, default=v[CONF_LUX_BRIGHT]): _number(0, 100000, 50, "lx"),
             }
         )
-        return self.async_show_form(step_id="daylight", data_schema=schema)
+        return self.async_show_form(step_id="daylight", data_schema=schema, errors=errors)
 
     async def async_step_night(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -209,6 +216,8 @@ class RoomSubentryFlow(ConfigSubentryFlow):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
+            if any(s.data.get(CONF_AREA) == user_input[CONF_AREA] for s in self._get_entry().subentries.values()):
+                return self.async_abort(reason="already_configured")
             self._area_id = user_input[CONF_AREA]
             return await self.async_step_room()
         return self.async_show_form(
@@ -227,7 +236,7 @@ class RoomSubentryFlow(ConfigSubentryFlow):
         values = user_input or {
             CONF_COVERS: _area_entities(self.hass, self._area_id, "cover"),
             CONF_WINDOW_SENSOR: next(
-                iter(_area_entities(self.hass, self._area_id, "binary_sensor", {"window", "door", "opening"})), None
+                iter(_area_entities(self.hass, self._area_id, "binary_sensor", set(WINDOW_CLASSES))), None
             ),
             CONF_DIRECTION: "none",
         }
@@ -284,7 +293,8 @@ class RoomSubentryFlow(ConfigSubentryFlow):
 
     async def async_step_sun(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         if user_input is not None:
-            return self._update(user_input)
+            # die Gradzahl aus dem Panel hätte sonst weiter Vorrang vor der hier gewählten Richtung
+            return self._update({**user_input, CONF_DIRECTION_DEG: None})
         schema = vol.Schema(
             {
                 vol.Required(CONF_DIRECTION, default=self._data().get(CONF_DIRECTION, "none")): _select(

@@ -13,18 +13,22 @@ from . import FacadeConfigEntry
 from .conductor import Conductor, Room
 from .const import MODE_OFF
 from .engine import Reason, Window
-from .entity import RoomEntity
+from .entity import RoomEntity, remove_stale
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: FacadeConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     conductor = entry.runtime_data
+    by_room = {}
     for room in conductor.rooms:
         entities = [ReasonSensor(conductor, room), TargetSensor(conductor, room)]
         if room.window_sensor:
             entities.append(WindowSensor(conductor, room))
-        async_add_entities(entities, config_subentry_id=room.subentry_id)
+        by_room[room.subentry_id] = entities
+    remove_stale(hass, entry.entry_id, "sensor", [e for entities in by_room.values() for e in entities])
+    for subentry_id, entities in by_room.items():
+        async_add_entities(entities, config_subentry_id=subentry_id)
 
 
 class ReasonSensor(RoomEntity, SensorEntity):

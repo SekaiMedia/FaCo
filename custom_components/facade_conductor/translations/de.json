@@ -82,6 +82,9 @@
           "rain": "Regenspalt"
         }
       }
+    },
+    "error": {
+      "lux_order": "„Dunkel unter“ muss kleiner sein als „hell über“, sonst wechselt der Tag ständig hin und her."
     }
   },
   "config_subentries": {
@@ -180,7 +183,8 @@
         "no_covers": "Bitte mindestens einen Rollladen oder Vorhang wählen."
       },
       "abort": {
-        "reconfigure_successful": "Gespeichert."
+        "reconfigure_successful": "Gespeichert.",
+        "already_configured": "Für diesen Bereich gibt es schon einen Raum."
       }
     }
   },
@@ -248,7 +252,8 @@
           "frost": "Frostschutz",
           "rain_protection": "Regenschutz",
           "wind_protection": "Windschutz",
-          "vacation": "Urlaub"
+          "vacation": "Urlaub",
+          "lockout_protection": "Aussperrschutz"
         }
       },
       "target_position": {

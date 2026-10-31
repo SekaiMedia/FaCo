@@ -38,6 +38,7 @@ class Reason(str, Enum):
     WINDOW_OPEN = "window_open"
     RAIN = "rain_protection"
     MANUAL = "manual"
+    DOOR = "lockout_protection"
     WIND = "wind_protection"
     FROST = "frost"
     SAFETY = "safety"
@@ -50,6 +51,7 @@ LEVEL = {
     Reason.RAIN: 3,
     Reason.VACATION: 7,
     Reason.MANUAL: 2,
+    Reason.DOOR: 2,
     Reason.WINDOW_TILTED: 3,
     Reason.WINDOW_OPEN: 3,
     Reason.SITUATION: 4,
@@ -94,6 +96,7 @@ class RoomState:
     frost: bool = False  # Frostschutz: nicht fahren, damit nichts festfriert
     rain: bool = False  # Regen weht ins offene Fenster
     wind: bool = False  # Sturm: Jalousien hoch, sonst nehmen sie Schaden
+    door: bool = False  # der Kontakt gehört zu einer Tür: Aussperrschutz
 
 
 @dataclass(frozen=True)
@@ -172,6 +175,11 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
 
     if room.manual is not None:
         pos, reason = room.manual, Reason.MANUAL
+
+    # Aussperrschutz: vor einer offenen Tür nie unter die Durchgangshöhe, auch nachts, beim Schlafen
+    # und bei „Alle runter“ über eine Gruppe, sonst sperrt man jemanden auf der Terrasse aus
+    if room.door and room.window is not Window.CLOSED and pos < p.open:
+        pos, reason = p.open, Reason.DOOR
 
     if room.wind:
         pos, reason = 100, Reason.WIND

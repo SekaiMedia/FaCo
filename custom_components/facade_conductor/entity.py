@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity import Entity
 
 from .conductor import Conductor, Room
 from .const import DOMAIN, MODE_OFF
+
+
+def remove_stale(hass: HomeAssistant, entry_id: str, domain: str, entities: list[Entity]) -> None:
+    """Entitäten, die es nicht mehr gibt (Ebene abgewählt, Sensor entfernt), nicht verwaist liegen lassen."""
+    wanted = {e.unique_id for e in entities}
+    ent_reg = er.async_get(hass)
+    for old in er.async_entries_for_config_entry(ent_reg, entry_id):
+        if old.domain == domain and old.unique_id not in wanted:
+            ent_reg.async_remove(old.entity_id)
 
 
 def hub_device(entry_id: str) -> DeviceInfo:

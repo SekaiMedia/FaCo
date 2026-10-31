@@ -82,6 +82,9 @@
           "rain": "Rain gap"
         }
       }
+    },
+    "error": {
+      "lux_order": "\"Dark below\" must be lower than \"bright above\", otherwise the day keeps switching back and forth."
     }
   },
   "config_subentries": {
@@ -180,7 +183,8 @@
         "no_covers": "Please choose at least one shutter or curtain."
       },
       "abort": {
-        "reconfigure_successful": "Saved."
+        "reconfigure_successful": "Saved.",
+        "already_configured": "There is already a room for this area."
       }
     }
   },
@@ -248,7 +252,8 @@
           "frost": "Frost protection",
           "rain_protection": "Rain protection",
           "wind_protection": "Wind protection",
-          "vacation": "Vacation"
+          "vacation": "Vacation",
+          "lockout_protection": "Lockout protection"
         }
       },
       "target_position": {

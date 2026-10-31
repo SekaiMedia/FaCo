@@ -24,7 +24,6 @@
     "covers_hint": "Mehrere fahren im Gleichlauf. Oben stehen die aus diesem Bereich. Vorhänge erkennt Facade Conductor selbst: tagsüber offen, abends und beim Schlafen zu, ohne Lüftungsspalt.",
     "no_covers": "Kein Rollladen gewählt. Dieser Raum fährt nichts, sein Fenster zählt aber für Warnungen und Übersicht.",
     "window_sensor": "Fensterkontakt",
-    "none": "keiner",
     "window_means": "Kontakt offen bedeutet",
     "means_tilted": "gekippt",
     "means_open": "ganz offen",
@@ -234,7 +233,9 @@
     "vacation_after": "Automatisch, wenn alle so viele Stunden weg sind (0 = nur per Schalter)",
     "vacation_hint": "Normaler Tagesablauf, aber jeder Raum folgt Morgen, Abend und Nacht bis zu 20 Minuten später und steht bis zu 10 % anders, jeden Tag neu gemischt. So wirkt das Haus bewohnt. Sicherheit, Hitzeschutz, Frost und Wind gelten weiter. Der Schalter „Urlaub“ lässt sich auch aus einer Automation oder einem Kalender heraus setzen.",
     "msg_rain": "Regen auf Tür",
-    "msg_rain_long": "Regen auf offene Tür"
+    "msg_rain_long": "Regen auf offene Tür",
+    "door_protect": "Rollladen vor einer Tür (Aussperrschutz)",
+    "door_protect_hint": "Ist die Tür offen, fährt der Rollladen nie unter „Fenster ganz offen“: auch nachts, beim Schlafen und bei „Alle runter“ über eine Gruppe. Bei Regen kommt statt des Regenspalts eine Meldung. Vorgewählt, wenn der Kontakt eine Tür ist."
   },
   "en": {
     "tab_overview": "Overview",
@@ -261,7 +262,6 @@
     "covers_hint": "Several move in sync. Those from this area are listed first. Facade Conductor recognises curtains itself: open during the day, closed in the evening and while sleeping, without a gap.",
     "no_covers": "No shutter selected. This room moves nothing, but its window counts for warnings and the overview.",
     "window_sensor": "Window contact",
-    "none": "none",
     "window_means": "Contact open means",
     "means_tilted": "tilted",
     "means_open": "fully open",
@@ -471,6 +471,8 @@
     "vacation_after": "Automatically when everyone has been away this many hours (0 = switch only)",
     "vacation_hint": "Normal schedule, but each room follows morning, evening and night up to 20 minutes later and stands up to 10 % differently, mixed anew every day. The house looks lived in. Safety, heat protection, frost and wind still apply. The \"Vacation\" switch can also be set from an automation or a calendar.",
     "msg_rain": "rain on door",
-    "msg_rain_long": "Rain on open door"
+    "msg_rain_long": "Rain on open door",
+    "door_protect": "Shutter in front of a door (lockout protection)",
+    "door_protect_hint": "While the door is open, the shutter never goes below \"Window fully open\": also at night, while sleeping and on \"all down\" via a group. In rain there is a message instead of the rain gap. Preselected when the contact is a door."
   }
 }

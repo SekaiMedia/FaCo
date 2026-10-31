@@ -325,6 +325,23 @@ class Werkzeuge(unittest.TestCase):
         self.assertFalse(stand_still(R.SITUATION, False, True))  # Situation mit Position
         self.assertFalse(stand_still(R.SCHEDULE, True, False))
 
+    def test_aussperrschutz(self):
+        nacht = House(Phase.NIGHT, 23.5)
+        tuer = RoomState(window=Window.TILTED, door=True)  # einfacher Kontakt, als „gekippt“ gezählt
+        self.assertEqual(decide(RoomConfig(), tuer, nacht, current=100), Decision(100, R.DOOR))
+        schlaf = RoomState(window=Window.OPEN, door=True, asleep=True)
+        self.assertEqual(decide(RoomConfig(), schlaf, nacht, current=100), Decision(100, R.DOOR))
+        gruppe = RoomState(window=Window.OPEN, door=True, manual=0)  # „Alle runter“ per Sprache
+        self.assertEqual(decide(RoomConfig(), gruppe, nacht, current=100), Decision(100, R.DOOR))
+        zu = RoomState(door=True)
+        self.assertEqual(decide(RoomConfig(), zu, nacht, current=100), Decision(0, R.SCHEDULE))
+        fenster = RoomState(window=Window.TILTED)  # ein Fenster bleibt beim Lüftungsspalt
+        self.assertEqual(decide(RoomConfig(), fenster, nacht, current=100), Decision(25, R.WINDOW_TILTED))
+        alarm = RoomState(window=Window.OPEN, door=True, safety=0)  # Haus leer und Alarm: Sicherheit geht vor
+        self.assertEqual(decide(RoomConfig(), alarm, nacht, current=100), Decision(0, R.SAFETY))
+        tag = RoomState(window=Window.OPEN, door=True)
+        self.assertEqual(decide(RoomConfig(), tag, House(Phase.DAY, 12), current=100), Decision(100, R.SCHEDULE))
+
     def test_himmelsrichtung(self):
         self.assertEqual(direction_range("e"), (45, 135))
         self.assertEqual(direction_range("n"), (315, 45))

@@ -9,16 +9,17 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import FacadeConfigEntry
 from .conductor import Conductor, Room
 from .const import MODE_OFF
-from .entity import RoomEntity
+from .entity import RoomEntity, remove_stale
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: FacadeConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     conductor = entry.runtime_data
-    for room in conductor.rooms:
-        if room.sleep_sensor:
-            async_add_entities([AsleepSensor(conductor, room)], config_subentry_id=room.subentry_id)
+    sensors = [AsleepSensor(conductor, room) for room in conductor.rooms if room.sleep_sensor]
+    remove_stale(hass, entry.entry_id, "binary_sensor", sensors)
+    for sensor in sensors:
+        async_add_entities([sensor], config_subentry_id=sensor._room.subentry_id)
 
 
 class AsleepSensor(RoomEntity, BinarySensorEntity):

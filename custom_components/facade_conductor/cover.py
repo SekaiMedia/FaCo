@@ -12,14 +12,13 @@ from homeassistant.components.cover import ATTR_POSITION, CoverDeviceClass, Cove
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import FacadeConfigEntry
 from .conductor import Conductor, Room, _position
 from .const import CONF_GROUPS
-from .entity import RoomEntity, hub_device
+from .entity import RoomEntity, hub_device, remove_stale
 
 
 async def async_setup_entry(
@@ -42,12 +41,8 @@ async def async_setup_entry(
             groups.append(FloorCover(conductor, members, floor_id, floor.name))
     room_groups = [RoomCover(conductor, room) for room in rooms] if "room" in levels else []
 
-    # abgewählte Ebenen, leere Etagen und Räume ohne Rollladen nicht als verwaiste Entitäten liegen lassen
-    wanted = {g.unique_id for g in [*groups, *room_groups]}
-    ent_reg = er.async_get(hass)
-    for old in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        if old.domain == "cover" and old.unique_id not in wanted:
-            ent_reg.async_remove(old.entity_id)
+    # abgewählte Ebenen, leere Etagen und Räume ohne Rollladen
+    remove_stale(hass, entry.entry_id, "cover", [*groups, *room_groups])
     async_add_entities(groups)
 
     for group in room_groups:

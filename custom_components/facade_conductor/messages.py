@@ -89,12 +89,19 @@ class Messages:
 
     @callback
     def async_start(self) -> None:
-        # Einträge von vor dem Neustart: ob der Rollladen noch fehlt, zeigt sich nach 15 Minuten neu
+        # Einträge von vor dem Neustart: ob der Rollladen noch fehlt, zeigt sich nach 15 Minuten neu.
+        # Nach dem Neuladen beim Speichern bleiben die gemerkten Ausfälle und ihre Einträge stehen.
         for domain, issue_id in list(ir.async_get(self.hass).issues):
-            if domain == DOMAIN and issue_id.startswith("unreachable_"):
+            if domain == DOMAIN and issue_id.startswith("unreachable_") and issue_id[12:] not in self._sent:
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
         if self.manual:
             self._unsub = self.hass.bus.async_listen("mobile_app_notification_action", self._on_action)
+
+    def kept(self) -> tuple[dict[str, float], set[str]]:
+        return self._down, self._sent
+
+    def restore(self, kept: tuple[dict[str, float], set[str]]) -> None:
+        self._down, self._sent = kept
 
     @callback
     def async_stop(self) -> None:

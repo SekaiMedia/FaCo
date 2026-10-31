@@ -44,6 +44,8 @@ class Einstellungsseite(unittest.TestCase):
         self.assertEqual(_js_list("DIRECTIONS"), _const("DIRECTION_OPTIONS"))
         self.assertEqual(_js_list("POSITIONS"), list(_const("POSITION_KEYS")))
         self.assertEqual(_js_list("GROUPS"), _const("GROUP_OPTIONS"))
+        self.assertEqual(_js_list("WINDOW_CLASSES"), _const("WINDOW_CLASSES"))
+        self.assertTrue(set(_js_list("DOOR_CLASSES")) <= set(_const("WINDOW_CLASSES")))
 
     def test_jeder_reiter_hat_seite(self):
         for tab in _js_list("TABS"):
@@ -100,6 +102,15 @@ class Einstellungsseite(unittest.TestCase):
         script = source + f"console.log(JSON.stringify({json.dumps([c[:2] for c in cases])}.map(([a, b]) => sameName(a, b))));"
         out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
         self.assertEqual(json.loads(out), [c[2] for c in cases])
+
+    def test_uhrzeit_im_backend(self):
+        # das Panel prüft selbst, das Backend muss trotzdem Unsinn wie 99:99 ablehnen
+        source = (BASE / "websocket.py").read_text(encoding="utf-8")
+        pattern = re.search(r'TIME_TEXT = vol.Match\(r"(.*?)"\)', source).group(1)
+        for text, ok in (("07:30", True), ("23:59:00", True), ("00:00", True), ("24:00", False),
+                         ("99:99", False), ("7:30", False), ("07:60", False)):
+            with self.subTest(text=text):
+                self.assertEqual(bool(re.match(pattern, text)), ok)
 
     def test_jeder_text_vorhanden(self):
         used = set(re.findall(r'_t\("(\w+)"', PANEL))

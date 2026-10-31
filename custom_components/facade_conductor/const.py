@@ -45,6 +45,8 @@ CONF_AREA = "area"
 CONF_COVERS = "covers"
 CONF_WINDOW_SENSOR = "window_sensor"
 CONF_WINDOW_MEANS = "window_means"
+# Tür mit Aussperrschutz; leer heißt: ja, wenn der Kontakt eine Tür ist
+CONF_DOOR = "door"
 CONF_SLEEP_SENSOR = "sleep_sensor"
 CONF_SLEEP_PAUSE_START = "sleep_pause_start"
 CONF_SLEEP_PAUSE_END = "sleep_pause_end"
@@ -103,6 +105,8 @@ DEFAULTS = {
 }
 
 WINDOW_MEANS_OPTIONS = ["tilted", "open"]
+# Geräteklassen, die als Fenster oder Tür zählen; das Panel nutzt dieselbe Liste
+WINDOW_CLASSES = ["window", "door", "opening", "garage_door"]
 DIRECTION_OPTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"]
 
 MODE_OFF = "off"
