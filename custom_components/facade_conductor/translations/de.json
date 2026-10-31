@@ -209,6 +209,17 @@
         "name": "Schlafen"
       }
     },
+    "cover": {
+      "all_covers": {
+        "name": "Alle Rollläden"
+      },
+      "floor_covers": {
+        "name": "Rollläden {floor}"
+      },
+      "room_covers": {
+        "name": "Rollläden"
+      }
+    },
     "select": {
       "mode": {
         "name": "Betriebsart",

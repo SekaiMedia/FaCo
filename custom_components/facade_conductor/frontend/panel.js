@@ -1,12 +1,13 @@
 // Einstellungsseite von Facade Conductor in der Seitenleiste.
 // Ohne Build-Schritt: ein Web Component, Texte aus strings.json, Daten über die Websocket-Befehle in websocket.py.
 
-const STRINGS = await fetch(new URL("./strings.json", import.meta.url))
+// dieselbe Versionsnummer wie panel.js, sonst liefert der Browser nach einem Update alte Texte
+const STRINGS = await fetch(new URL(`./strings.json${new URL(import.meta.url).search}`, import.meta.url))
   .then((r) => r.json())
   .catch(() => ({}));
 
 const TABS = ["overview", "rooms", "settings"];
-const SECTIONS = ["schedule", "windows", "leave", "heat", "daylight", "behavior", "about"];
+const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "heat", "daylight", "behavior", "about"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade"];
@@ -34,6 +35,9 @@ const parseTime = (text) => {
 // Jedes Suchwort muss im Text vorkommen, Reihenfolge egal: „küche fenster“ findet „Fenster Küche“
 const matches = (query, text) =>
   query.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
+// Vorschlag für die Zustände einer gewählten Entität
+const suggestStates = (id) =>
+  id.startsWith("media_player.") ? "on, playing, paused" : id.startsWith("alarm_control_panel.") ? "triggered" : "on";
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -293,6 +297,45 @@ class FacadeConductorPanel extends HTMLElement {
     ];
   }
 
+  _sec_safety(info) {
+    const triggers = info.house.safety || [];
+    const pos = (v) => (v == null ? this._t("nothing") : `${v} %`);
+    return [
+      triggers.length ? this._t("sum_safety", { n: triggers.length }) : this._t("no_triggers"),
+      `<p class="muted">${esc(this._t("safety_hint"))}</p>
+       ${triggers
+         .map(
+           (t, i) => `<div class="row">
+             <span>${esc(this._t("safety_row", { name: this._name(t.entity), states: t.states.join(", "), home: pos(t.home), away: pos(t.away) }))}</span>
+             <button class="btn2" data-safety-del="${i}">${esc(this._t("remove"))}</button>
+           </div>`,
+         )
+         .join("")}
+       <div class="positions">
+         <label class="field">${esc(this._t("situation_entity"))}
+           ${this._combo("x-entity", "draft", "safety", Object.keys(this._hass.states), this._draft.safety)}</label>
+         <label class="field">${esc(this._t("situation_states"))}
+           <input id="x-states" class="filter" value="${esc(this._draft.xstates || "")}" placeholder="on"></label>
+         <label class="field">${esc(this._t("safety_home"))}
+           <input id="x-home" type="number" min="0" max="100" step="1" value="${esc(this._draft.home ?? "")}" placeholder="${esc(this._t("nothing"))}"></label>
+         <label class="field">${esc(this._t("safety_away"))}
+           <input id="x-away" type="number" min="0" max="100" step="1" value="${esc(this._draft.away ?? "")}" placeholder="${esc(this._t("nothing"))}"></label>
+       </div>
+       <div><button class="btn" data-action="safety-add">${esc(this._t("add_trigger"))}</button></div>`,
+    ];
+  }
+
+  _sec_messages(info) {
+    const h = info.house;
+    const on = [h.notify_unreachable && this._t("msg_unreachable"), h.notify_manual && this._t("msg_manual")].filter(Boolean);
+    return [
+      on.length ? on.join(" · ") : this._t("off"),
+      `<label class="switch"><input type="checkbox" data-notify="notify_unreachable" ${h.notify_unreachable ? "checked" : ""}> ${esc(this._t("msg_unreachable_long"))}</label>
+       <label class="switch"><input type="checkbox" data-notify="notify_manual" ${h.notify_manual ? "checked" : ""}> ${esc(this._t("msg_manual_long"))}</label>
+       <p class="muted">${esc(this._t("messages_hint"))}</p>`,
+    ];
+  }
+
   _sec_heat(info) {
     const h = info.house;
     const weathers = Object.keys(this._hass.states).filter((id) => id.startsWith("weather."));
@@ -355,9 +398,11 @@ class FacadeConductorPanel extends HTMLElement {
     const cards = info.rooms
       .map((r) => {
         const pos = pct(r.position);
+        // Raum nur mit Fensterkontakt: kein Ziel, aber der Fensterzustand zählt
+        const windowOnly = !(r.data.covers || []).length;
         const reason = r.reason
           ? `<span class="chip" style="--c:${REASON_COLOR[r.reason] || "var(--secondary-text-color)"}">${esc(this._reasonText(r))}</span>`
-          : `<span class="muted">${esc(this._t("waiting"))}</span>`;
+          : `<span class="muted">${esc(windowOnly ? this._t("window_only") : this._t("waiting"))}</span>`;
         const resume =
           r.reason === "manual" && r.manual_entity
             ? `<button class="btn" data-resume="${esc(r.manual_entity)}">${esc(this._t("resume"))}</button>`
@@ -365,7 +410,11 @@ class FacadeConductorPanel extends HTMLElement {
         return `<div class="card">
           <div class="row"><h2>${esc(r.name)}</h2><span class="big">${esc(pos)}</span></div>
           <div class="bar"><span style="width:${Number(r.position) || 0}%"></span></div>
-          <div class="row">${reason}<span class="muted">${esc(this._t("target"))} ${esc(pct(r.target))}</span></div>
+          <div class="row">${reason}<span class="muted">${esc(
+            windowOnly
+              ? `${this._t("window")}: ${r.data.window_sensor ? this._stateText(r.data.window_sensor) : this._t("no_contact")}`
+              : `${this._t("target")} ${pct(r.target)}`,
+          )}</span></div>
           <div class="row start">${resume}<button class="btn2" data-open="${esc(r.id)}">${esc(this._t("settings"))}</button></div>
         </div>`;
       })
@@ -496,6 +545,48 @@ class FacadeConductorPanel extends HTMLElement {
     });
   }
 
+  // Karte über dem Haus: OpenStreetMap-Kacheln in Zoomstufe 19, Norden oben. Erst aufs Fenster tippen,
+  // dann davor nach draußen; aus den beiden Punkten ergibt sich die Blickrichtung in Grad.
+  _mapView() {
+    const m = this._map;
+    const { latitude: lat, longitude: lon } = this._hass.config;
+    const zoom = 19;
+    const n = 2 ** zoom;
+    const rad = (lat * Math.PI) / 180;
+    const xt = ((lon + 180) / 360) * n;
+    const yt = ((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * n;
+    const [cx, cy] = [Math.floor(xt), Math.floor(yt)];
+    const home = [(xt - cx + 1) * 256, (yt - cy + 1) * 256];
+    const tiles = [-1, 0, 1]
+      .flatMap((dy) => [-1, 0, 1].map((dx) => [dx, dy]))
+      .map(([dx, dy]) => `<img alt="" src="https://tile.openstreetmap.org/${zoom}/${cx + dx}/${cy + dy}.png" style="left:${(dx + 1) * 33.3333}%;top:${(dy + 1) * 33.3333}%">`)
+      .join("");
+    const ray = (deg, r) => [m.win[0] + r * Math.sin((deg * Math.PI) / 180), m.win[1] - r * Math.cos((deg * Math.PI) / 180)];
+    let overlay = `<circle cx="${home[0]}" cy="${home[1]}" r="6" fill="#03a9f4" stroke="#fff" stroke-width="2"/>`;
+    if (m.win) overlay += `<circle cx="${m.win[0]}" cy="${m.win[1]}" r="9" fill="#ff9800" stroke="#fff" stroke-width="3"/>`;
+    if (m.win && m.deg != null) {
+      const [a, b, tip] = [ray(m.deg - 45, 220), ray(m.deg + 45, 220), ray(m.deg, 150)];
+      overlay =
+        `<path d="M${m.win[0]} ${m.win[1]} L${a[0]} ${a[1]} A220 220 0 0 1 ${b[0]} ${b[1]} Z" fill="rgba(255,152,0,.25)"/>` +
+        `<line x1="${m.win[0]}" y1="${m.win[1]}" x2="${tip[0]}" y2="${tip[1]}" stroke="#ff9800" stroke-width="6" stroke-linecap="round"/>` +
+        overlay;
+    }
+    const name = m.deg == null ? "" : this._t(`dir_${DIRECTIONS.slice(1)[Math.round(m.deg / 45) % 8]}`);
+    return `<div class="mapbox">
+        <p class="muted">${esc(this._t(m.win ? "map_step2" : "map_step1"))}</p>
+        <div class="map" data-map>
+          ${tiles}
+          <svg viewBox="0 0 768 768" aria-hidden="true">${overlay}</svg>
+        </div>
+        <p class="muted">© OpenStreetMap</p>
+        ${m.deg != null ? `<p><b>${Math.round(m.deg)}°, ${esc(name)}</b> · ${esc(this._t("map_range", { from: Math.round((m.deg + 315) % 360), to: Math.round((m.deg + 45) % 360) }))}</p>` : ""}
+        <div class="row start">
+          ${m.deg != null ? `<button class="btn" data-map-save>${esc(this._t("map_save"))}</button>` : ""}
+          <button class="btn2" data-map-cancel>${esc(this._t("map_cancel"))}</button>
+        </div>
+      </div>`;
+  }
+
   _roomForm(room, info) {
     const d = room.data;
     const all = Object.keys(this._hass.states);
@@ -526,7 +617,9 @@ class FacadeConductorPanel extends HTMLElement {
           ${covers
             .map(
               (id) =>
-                `<label data-cover-label="${esc(this._searchText(id))}"><input type="checkbox" data-cover value="${esc(id)}" ${chosen.has(id) ? "checked" : ""}> ${esc(this._name(id))}</label>`,
+                `<label data-cover-label="${esc(this._searchText(id))}"><input type="checkbox" data-cover value="${esc(id)}" ${chosen.has(id) ? "checked" : ""}> ${esc(this._name(id))}${
+                  this._hass.states[id].attributes.device_class === "curtain" ? ` <span class="muted">· ${esc(this._t("curtain"))}</span>` : ""
+                }</label>`,
             )
             .join("")}
         </div>
@@ -570,10 +663,21 @@ class FacadeConductorPanel extends HTMLElement {
       <div class="card">
         <h3>${esc(this._t("sun"))}</h3>
         <label class="field">${esc(this._t("direction"))}
-          <select id="f-direction" data-field="direction">
-            ${DIRECTIONS.map((x) => `<option value="${x}" ${(d.direction || "none") === x ? "selected" : ""}>${esc(this._t(`dir_${x}`))}</option>`).join("")}
+          <select id="f-direction" data-direction>
+            ${d.direction_deg != null ? `<option value="custom" selected>${esc(this._t("dir_custom", { deg: Math.round(d.direction_deg) }))}</option>` : ""}
+            ${DIRECTIONS.map((x) => `<option value="${x}" ${d.direction_deg == null && (d.direction || "none") === x ? "selected" : ""}>${esc(this._t(`dir_${x}`))}</option>`).join("")}
           </select></label>
         <p class="muted">${esc(this._t("direction_hint"))}</p>
+        ${this._map && this._map.room === room.id ? this._mapView() : `<div><button class="btn2" data-map-open>${esc(this._t("map_open"))}</button></div>`}
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("cooling"))}</h3>
+        <label class="field">${esc(this._t("cooling_sensor"))}
+          ${this._combo("f-cooling", "room", "cooling_sensor", Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature"), d.cooling_sensor)}</label>
+        <label class="field">${esc(this._t("cooling_above"))}
+          <input id="f-cooling-above" type="number" min="10" max="40" step="0.5" data-field="cooling_above"
+            value="${esc(d.cooling_above ?? "")}" placeholder="24"></label>
+        <p class="muted">${esc(this._t("cooling_hint"))}</p>
       </div>
       <div class="card">
         <h3>${esc(this._t("sleep"))}</h3>
@@ -597,6 +701,21 @@ class FacadeConductorPanel extends HTMLElement {
             <input id="f-pause-end" ${TIME_FIELD} data-pause="sleep_pause_end" value="${esc((pause.sleep_pause_end || "").slice(0, 5))}"></label>
         </div>
         <p class="muted">${esc(this._t("pause_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("wake"))}</h3>
+        <label class="field">${esc(this._t("wake_sensor"))}
+          ${this._combo("f-wake-sensor", "room", "wake_sensor", Object.keys(this._hass.states).filter((id) => id.startsWith("input_datetime.") || (id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "timestamp")), d.wake_sensor)}</label>
+        <div class="positions">
+          <label class="field">${esc(this._t("wake_lead"))}
+            <input id="f-wake-lead" type="number" min="0" max="120" step="1" data-field="wake_lead" value="${esc(d.wake_lead ?? "")}" placeholder="0"></label>
+          <label class="field">${esc(this._t("wake_dark"))}
+            <select id="f-wake-wait" data-wake-wait>
+              <option value="" ${d.wake_wait ? "" : "selected"}>${esc(this._t("wake_gap"))}</option>
+              <option value="1" ${d.wake_wait ? "selected" : ""}>${esc(this._t("wake_wait"))}</option>
+            </select></label>
+        </div>
+        <p class="muted">${esc(this._t("wake_hint"))}</p>
       </div>
       <div class="card">
         <h3>${esc(this._t("positions"))}</h3>
@@ -707,9 +826,10 @@ class FacadeConductorPanel extends HTMLElement {
         const { kind, key } = this._combos[combo.dataset.combo];
         if (kind === "draft") {
           // Vorschlag für die Zustände: ein Fernseher ist auch bei Pause „an“
-          this._draft = { ...this._draft, [key]: value, states: (value || "").startsWith("media_player.") ? "on, playing, paused" : "on" };
-          const states = root.getElementById("s-states");
-          if (states) states.value = this._draft.states;
+          const field = key === "safety" ? "xstates" : "states";
+          this._draft = { ...this._draft, [key]: value, [field]: suggestStates(value || "") };
+          const states = root.getElementById(key === "safety" ? "x-states" : "s-states");
+          if (states) states.value = this._draft[field];
           return;
         }
         (kind === "house" ? saveHouse : save)({ [key]: value });
@@ -730,6 +850,45 @@ class FacadeConductorPanel extends HTMLElement {
       const entity = this._draft.situation;
       this._draft = {};
       save({ situations: [...(room.data.situations || []), { entity, states, position }] });
+    });
+    root.getElementById("x-states")?.addEventListener("input", (e) => (this._draft.xstates = e.target.value));
+    root.getElementById("x-home")?.addEventListener("input", (e) => (this._draft.home = e.target.value));
+    root.getElementById("x-away")?.addEventListener("input", (e) => (this._draft.away = e.target.value));
+    const num = (v) => (v === undefined || v === "" ? null : Number(v));
+    root.querySelector("[data-action=safety-add]")?.addEventListener("click", () => {
+      const states = (this._draft.xstates || "").split(",").map((x) => x.trim()).filter(Boolean);
+      if (!this._draft.safety || !states.length) return this._flash(this._t("situation_incomplete"));
+      const trigger = { entity: this._draft.safety, states, home: num(this._draft.home), away: num(this._draft.away) };
+      this._draft = {};
+      saveHouse({ safety: [...(this._info.house.safety || []), trigger] });
+    });
+    root.querySelectorAll("[data-safety-del]").forEach((el) =>
+      el.addEventListener("click", () =>
+        saveHouse({ safety: (this._info.house.safety || []).filter((_, i) => i !== Number(el.dataset.safetyDel)) }),
+      ),
+    );
+    root.getElementById("f-wake-wait")?.addEventListener("change", (e) => save({ wake_wait: e.target.value === "1" }));
+    root.querySelectorAll("[data-notify]").forEach((el) =>
+      el.addEventListener("change", () => saveHouse({ [el.dataset.notify]: el.checked })),
+    );
+    root.getElementById("f-direction")?.addEventListener("change", (e) => {
+      if (e.target.value !== "custom") save({ direction: e.target.value, direction_deg: null });
+    });
+    root.querySelector("[data-map-open]")?.addEventListener("click", () => ((this._map = { room: this._room }), this._render()));
+    root.querySelector("[data-map-cancel]")?.addEventListener("click", () => ((this._map = null), this._render()));
+    root.querySelector("[data-map-save]")?.addEventListener("click", () => {
+      const deg = Math.round(this._map.deg);
+      this._map = null;
+      save({ direction_deg: deg });
+    });
+    root.querySelector("[data-map]")?.addEventListener("click", (e) => {
+      const box = e.currentTarget.getBoundingClientRect();
+      const point = [((e.clientX - box.left) / box.width) * 768, ((e.clientY - box.top) / box.height) * 768];
+      const m = this._map;
+      if (!m.win || m.deg != null) Object.assign(m, { win: point, deg: null });
+      // Norden ist oben: Winkel im Uhrzeigersinn von Norden
+      else m.deg = ((Math.atan2(point[0] - m.win[0], m.win[1] - point[1]) * 180) / Math.PI + 360) % 360;
+      this._render();
     });
     root.querySelectorAll("[data-sit-del]").forEach((el) =>
       el.addEventListener("click", () => {
@@ -803,6 +962,10 @@ const STYLE = `
   .combo-list li[aria-selected="true"], .combo-list li[data-i]:hover { background: rgba(var(--rgb-primary-color, 3, 169, 244), .15); }
   .combo-list li .muted { font-size: 12px; }
   input.filter { max-width: 320px; }
+  .mapbox { display: flex; flex-direction: column; gap: 8px; }
+  .map { position: relative; width: 100%; max-width: 768px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; cursor: crosshair; background: #ddd; }
+  .map img { position: absolute; width: 33.334%; height: 33.334%; }
+  .map svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .muted { color: var(--secondary-text-color); font-size: 14px; margin: 0; }
   .hint { background: rgba(255, 166, 0, .15); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }

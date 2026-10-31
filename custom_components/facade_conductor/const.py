@@ -16,6 +16,9 @@ CONF_POSITIONS = "positions"
 CONF_LEAVE_ENABLED = "leave_enabled"
 CONF_LEAVE_CONTACTS = "leave_contacts"
 CONF_LEAVE_EXCLUDE_PERSONS = "leave_exclude_persons"
+CONF_SAFETY = "safety"
+CONF_NOTIFY_UNREACHABLE = "notify_unreachable"
+CONF_NOTIFY_MANUAL = "notify_manual"
 
 # Raum
 CONF_AREA = "area"
@@ -27,8 +30,15 @@ CONF_SLEEP_PAUSE_START = "sleep_pause_start"
 CONF_SLEEP_PAUSE_END = "sleep_pause_end"
 CONF_SLEEP_WAKE_MINUTES = "sleep_wake_minutes"
 CONF_SLEEP_WATTS = "sleep_watts"
+CONF_COOLING_SENSOR = "cooling_sensor"
+CONF_WAKE_SENSOR = "wake_sensor"
+CONF_WAKE_LEAD = "wake_lead"
+CONF_WAKE_WAIT = "wake_wait"
+CONF_COOLING_ABOVE = "cooling_above"
+DEFAULT_COOLING_ABOVE = 24
 DEFAULT_SLEEP_WATTS = 5
 CONF_DIRECTION = "direction"
+CONF_DIRECTION_DEG = "direction_deg"
 CONF_SITUATIONS = "situations"
 CONF_ADVANCED = "advanced"
 
@@ -46,6 +56,9 @@ DEFAULTS = {
     # Innentüren sollen nicht melden, deshalb wählt man die Kontakte selbst
     CONF_LEAVE_CONTACTS: [],
     CONF_LEAVE_EXCLUDE_PERSONS: [],
+    CONF_SAFETY: [],
+    CONF_NOTIFY_UNREACHABLE: True,
+    CONF_NOTIFY_MANUAL: False,
 }
 
 WINDOW_MEANS_OPTIONS = ["tilted", "open"]

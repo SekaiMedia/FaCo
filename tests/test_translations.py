@@ -70,7 +70,7 @@ class Uebersetzungen(unittest.TestCase):
 
     def test_jede_entitaet_hat_namen(self):
         found = 0
-        for platform in ("binary_sensor", "select", "sensor", "switch"):
+        for platform in ("binary_sensor", "cover", "select", "sensor", "switch"):
             source = (BASE / f"{platform}.py").read_text(encoding="utf-8")
             keys = set(re.findall(r'super\(\).__init__\(conductor, room, "(\w+)"\)', source))
             keys |= set(re.findall(r'_attr_translation_key = "(\w+)"', source))
@@ -82,7 +82,12 @@ class Uebersetzungen(unittest.TestCase):
         self.assertGreaterEqual(found, 6)
 
     def test_meldungen_in_beiden_sprachen(self):
-        tree = ast.parse((BASE / "leave.py").read_text(encoding="utf-8"))
+        for module in ("leave.py", "messages.py"):
+            with self.subTest(module=module):
+                self._texte_pruefen(module)
+
+    def _texte_pruefen(self, module):
+        tree = ast.parse((BASE / module).read_text(encoding="utf-8"))
         node = next(n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "TEXTS")
         texts = ast.literal_eval(node.value)
         self.assertEqual(set(texts), {"de", "en"})

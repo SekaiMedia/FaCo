@@ -164,12 +164,50 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
 
 def sleep_on(state: str | None, watts: float | None) -> bool:
     """Zeigt der Schlaf-Geber Schlafen an? Schalter und Sensoren mit „on“, Leistung über der Schwelle."""
-    if watts is None:
-        return state == "on"
+    return state == "on" if watts is None else at_least(state, watts)
+
+
+def at_least(state: str | None, threshold: float) -> bool:
+    """Messwert mindestens so hoch wie die Schwelle; nicht verfügbar zählt als nein."""
     try:
-        return float(state) >= watts
+        return float(state) >= threshold
     except (TypeError, ValueError):
-        return False  # nicht verfügbar zählt als wach
+        return False
+
+
+def wake_until(alarm: float | None, now: float, until: float | None, lead: float, end: float) -> float | None:
+    """Wecker: ab Weckzeit minus Vorlauf gilt der Raum als wach, und zwar bis `end`.
+
+    Das Ende wird gemerkt, weil das Handy nach dem Klingeln schon die nächste Weckzeit meldet.
+    Eine Stunde nach der Weckzeit greift er nicht mehr neu, etwa nach einem Neustart.
+    """
+    if until is not None and now < until:
+        return until
+    if alarm is not None and alarm - lead <= now < alarm + 3600:
+        return end
+    return None
+
+
+def wake_phase(phase: Phase, dark: bool, wait_for_light: bool) -> Phase:
+    """Phase eines geweckten Raums: die Nacht endet, im Dunkeln mit Spalt oder erst bei Helligkeit."""
+    if phase is not Phase.NIGHT:
+        return phase
+    if dark:
+        return Phase.NIGHT if wait_for_light else Phase.DUSK
+    return Phase.DAY
+
+
+def safety_position(triggers: list[dict], states: dict[str, str | None], anyone_home: bool) -> int | None:
+    """Erster aktiver Sicherheits-Auslöser mit einer Position für „jemand zu Hause“ oder „Haus leer“.
+
+    Eine leere Position heißt: dieser Auslöser tut in dieser Lage nichts.
+    """
+    for trigger in triggers:
+        if states.get(trigger["entity"]) in trigger["states"]:
+            position = trigger.get("home" if anyone_home else "away")
+            if position is not None:
+                return position
+    return None
 
 
 def situation_hold(
@@ -217,6 +255,40 @@ def leave_step(
     return stage, None
 
 
+UNREACHABLE_AFTER = 900
+
+
+def due_unreachable(down_since: dict[str, float], sent: set[str], unavailable: set[str], now: float) -> list[str]:
+    """Rollläden, die gerade 15 Minuten nicht erreichbar sind und noch nicht gemeldet wurden.
+
+    Merkt sich Beginn und Meldung je Rollladen; kommt er zurück, wird beides vergessen.
+    """
+    for cover in list(down_since):
+        if cover not in unavailable:
+            down_since.pop(cover)
+            sent.discard(cover)
+    due = []
+    for cover in unavailable:
+        since = down_since.setdefault(cover, now)
+        if now - since >= UNREACHABLE_AFTER and cover not in sent:
+            sent.add(cover)
+            due.append(cover)
+    return due
+
+
+def curtain_position(decision: Decision, phase: Phase) -> int:
+    """Vorhang innen: tagsüber offen, sonst zu als Sichtschutz, beim Schlafen dunkel.
+
+    Hand, Sicherheit und Situationen gelten wie beim Rollladen. Hitzeschutz wirkt innen kaum,
+    und ein offenes Fenster braucht keinen Spalt im Vorhang.
+    """
+    if decision.reason in (Reason.MANUAL, Reason.SAFETY, Reason.SITUATION):
+        return decision.position
+    if decision.reason is Reason.SLEEP:
+        return 0
+    return 100 if phase is Phase.DAY else 0
+
+
 def may_move(decision: Decision, last_auto_move: float | None, now: float, rest: float = 1200) -> bool:
     """Ruhe nach einer automatischen Fahrt. Sicherheit, Hand und Fenster wirken sofort."""
     if decision.level <= 3 or last_auto_move is None:
@@ -237,9 +309,9 @@ def batch(targets: dict[str, int], current: dict[str, int], tolerance: int = 2) 
 DIRECTIONS = {"n": 0, "ne": 45, "e": 90, "se": 135, "s": 180, "sw": 225, "w": 270, "nw": 315}
 
 
-def direction_range(direction: str, width: float = 45) -> tuple[float, float]:
-    """Sonnenwinkel, in dem die Sonne auf ein Fenster dieser Richtung scheint."""
-    center = DIRECTIONS[direction]
+def direction_range(direction: str | float, width: float = 45) -> tuple[float, float]:
+    """Sonnenwinkel, in dem die Sonne auf ein Fenster dieser Richtung scheint: Name oder Gradzahl."""
+    center = DIRECTIONS[direction] if isinstance(direction, str) else float(direction)
     return ((center - width) % 360, (center + width) % 360)
 
 

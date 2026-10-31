@@ -68,6 +68,15 @@ def phones(hass: HomeAssistant, person_id: str) -> list[str]:
     return found
 
 
+async def async_notify(hass: HomeAssistant, service: str, message: str, data: dict[str, Any]) -> None:
+    try:
+        await hass.services.async_call(
+            "notify", service, {"title": "Facade Conductor", "message": message, "data": data}, blocking=True
+        )
+    except Exception:  # noqa: BLE001 - ein ausgeschaltetes Handy darf die anderen Meldungen nicht aufhalten
+        _LOGGER.warning("Meldung an %s fehlgeschlagen", service)
+
+
 @dataclass
 class Alert:
     person: str
@@ -110,7 +119,7 @@ class LeaveWatcher:
 
     # Lage
 
-    def _anyone_home(self) -> bool:
+    def anyone_home(self) -> bool:
         return any((s := self.hass.states.get(p)) and s.state == STATE_HOME for p in self.persons)
 
     def _open(self) -> tuple[list[str], list[str]]:
@@ -131,7 +140,7 @@ class LeaveWatcher:
     def _on_person(self, event: Event[EventStateChangedData]) -> None:
         old, new = event.data["old_state"], event.data["new_state"]
         left = old is not None and old.state == STATE_HOME and new is not None and new.state != STATE_HOME
-        if left and self._active() and not self._anyone_home():
+        if left and self._active() and not self.anyone_home():
             self.alert = Alert(person=event.data["entity_id"], since=time.monotonic())
         self.hass.async_create_task(self._tick())
 
@@ -152,7 +161,7 @@ class LeaveWatcher:
             return
         doors, windows = self._open()
         stage, action = leave_step(
-            alert.stage, alert.since, time.monotonic(), self._anyone_home(), bool(doors), bool(windows)
+            alert.stage, alert.since, time.monotonic(), self.anyone_home(), bool(doors), bool(windows)
         )
         alert.stage = stage
         if action == "warn_person":
@@ -181,12 +190,7 @@ class LeaveWatcher:
                 self.alert.warned.append(service)
 
     async def _notify(self, service: str, message: str, data: dict[str, Any]) -> None:
-        try:
-            await self.hass.services.async_call(
-                "notify", service, {"title": "Facade Conductor", "message": message, "data": data}, blocking=True
-            )
-        except Exception:  # noqa: BLE001 - ein ausgeschaltetes Handy darf die anderen Meldungen nicht aufhalten
-            _LOGGER.warning("Meldung an %s fehlgeschlagen", service)
+        await async_notify(self.hass, service, message, data)
 
     async def async_test(self, person_id: str) -> int:
         """Testmeldung an alle Handys einer Person; zählt, wohin sie ging."""

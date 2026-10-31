@@ -19,7 +19,7 @@ from . import websocket
 from .conductor import Conductor
 from .const import DOMAIN
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PANEL_URL = "facade-conductor"
 STATIC_URL = f"/{DOMAIN}_static"

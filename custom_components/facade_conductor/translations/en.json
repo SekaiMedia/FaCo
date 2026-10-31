@@ -209,6 +209,17 @@
         "name": "Sleep"
       }
     },
+    "cover": {
+      "all_covers": {
+        "name": "All shutters"
+      },
+      "floor_covers": {
+        "name": "Shutters {floor}"
+      },
+      "room_covers": {
+        "name": "Shutters"
+      }
+    },
     "select": {
       "mode": {
         "name": "Operating mode",

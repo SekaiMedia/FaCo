@@ -28,8 +28,13 @@ Beta. Eingerichtet werden Haus und Räume, gerechnet wird mit Tagesablauf, Fenst
 Hitzeschutz und Handbetrieb. Je Raum gibt es Grund, Zielposition, Fenster, Schlafen und einen
 Schalter für den Handbetrieb. Geht die letzte Person und eine gewählte Tür oder ein Fenster ist
 offen, kommt eine Push-Meldung. Situationen wie „Fernseher an“ oder ein Kinomodus halten einen Raum
-oder fahren ihn auf eine feste Position. Noch nicht enthalten: Sicherheit, Abendkühlung, Wecker,
-Regenschutz und weitere Benachrichtigungen.
+oder fahren ihn auf eine feste Position. Ist ein Raum abends warm, bleibt er zum Abkühlen offen.
+Alarmanlage, Rauchmelder oder Stromausfall fahren alle Räume, getrennt für „jemand zu Hause“ und
+„Haus leer“. Ein Wecker öffnet einen Raum zur Weckzeit. Eigene Rollladen-Gruppen fürs Haus, je
+Etage und je Raum fahren auch per Sprache im Gleichlauf. Vorhänge werden erkannt und bekommen
+eigene Regeln, die Fensterrichtung lässt sich auf einer Karte festlegen, und auf Wunsch kommen
+Meldungen, wenn ein Rollladen nicht erreichbar ist. Noch nicht enthalten: Regenschutz, Wind,
+Urlaubsmodus und Durchsagen.
 
 Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Version vom November,
 `2026.11.0-beta.1` eine Beta dafür. Die Nummer sagt, wann eine Version erschien, nicht für welche
@@ -86,7 +91,10 @@ as an entity.
 and manual moves are handled; each room has entities for reason, target position, window, sleep
 and a manual switch. When the last person leaves while a chosen door or window is open, a push
 message is sent. Situations such as "TV on" or a cinema mode hold a room or move it to a fixed
-position. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
+position. A room that is warm in the evening stays open to cool down. Alarm, smoke or power failure move
+all rooms, an alarm clock opens a room at wake-up time, group covers for the house, each floor
+and each room work by voice, curtains get their own rules and the window direction can be set
+on a map. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
 **Installation (beta):**
 

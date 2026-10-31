@@ -35,6 +35,10 @@ class Einstellungsseite(unittest.TestCase):
     def test_gleiche_schluessel(self):
         self.assertEqual(set(STRINGS["de"]), set(STRINGS["en"]))
 
+    def test_texte_mit_version_laden(self):
+        # ohne die Versionsnummer zeigte der Browser nach einem Update Schlüssel statt Texte
+        self.assertIn("strings.json${new URL(import.meta.url).search}", PANEL)
+
     def test_listen_wie_in_const(self):
         self.assertEqual(_js_list("MODES"), _const("MODES"))
         self.assertEqual(_js_list("DIRECTIONS"), _const("DIRECTION_OPTIONS"))

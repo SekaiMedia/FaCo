@@ -35,10 +35,16 @@ from facade_engine import (  # noqa: E402
     LEAVE_FORWARDED,
     LEAVE_WAITING,
     LEAVE_WARNED,
+    at_least,
+    curtain_position,
+    due_unreachable,
     in_range,
     leave_step,
     may_move,
+    safety_position,
     situation_active,
+    wake_phase,
+    wake_until,
     situation_hold,
     sleep_on,
     still_asleep,
@@ -239,6 +245,63 @@ class Werkzeuge(unittest.TestCase):
             situation_hold(both, {"media_player.tv": "on", "input_boolean.kino": "on"}, 25, "media_player.tv", 25),
             ("input_boolean.kino", 25, 0),
         )
+
+    def test_abendkuehlung_schwelle(self):
+        self.assertTrue(at_least("24", 24))  # wie die alte Automation: unter 24 °C wird geschlossen
+        self.assertTrue(at_least("25.3", 24))
+        self.assertFalse(at_least("23.9", 24))
+        self.assertFalse(at_least("unavailable", 24))
+        self.assertFalse(at_least(None, 24))
+
+    def test_sicherheit_ausloeser(self):
+        alarm = {"entity": "alarm_control_panel.alarmo", "states": ["triggered"], "home": None, "away": 0}
+        rauch = {"entity": "binary_sensor.rauch", "states": ["on"], "home": 100, "away": 100}
+        both = [alarm, rauch]
+        self.assertIsNone(safety_position(both, {"alarm_control_panel.alarmo": "armed_away"}, False))
+        self.assertEqual(safety_position(both, {"alarm_control_panel.alarmo": "triggered"}, False), 0)
+        # zu Hause tut der Alarm nichts, damit niemand eingesperrt wird
+        self.assertIsNone(safety_position(both, {"alarm_control_panel.alarmo": "triggered"}, True))
+        # Rauch geht immer hoch, auch wenn der Alarm vorne steht und nichts tut
+        self.assertEqual(
+            safety_position(both, {"alarm_control_panel.alarmo": "triggered", "binary_sensor.rauch": "on"}, True), 100
+        )
+
+    def test_wecker(self):
+        alarm, noon = 6.5 * 3600, 12 * 3600
+        self.assertIsNone(wake_until(alarm, 6 * 3600, None, 0, noon))  # noch nicht
+        self.assertEqual(wake_until(alarm, 6.25 * 3600, None, 900, noon), noon)  # 15 Minuten Vorlauf
+        # nach dem Klingeln meldet das Handy die Weckzeit von morgen, der Raum bleibt trotzdem wach
+        self.assertEqual(wake_until(alarm + 86400, 8 * 3600, noon, 0, noon), noon)
+        self.assertIsNone(wake_until(alarm + 86400, noon, noon, 0, noon))  # mittags vorbei
+        self.assertIsNone(wake_until(alarm, 8 * 3600, None, 0, noon))  # Neustart lange danach
+        self.assertEqual(wake_phase(Phase.NIGHT, True, False), Phase.DUSK)  # dunkel: Spalt
+        self.assertEqual(wake_phase(Phase.NIGHT, True, True), Phase.NIGHT)  # dunkel: warten
+        self.assertEqual(wake_phase(Phase.NIGHT, False, True), Phase.DAY)
+        self.assertEqual(wake_phase(Phase.DUSK, True, False), Phase.DUSK)
+
+    def test_nicht_erreichbar_melden(self):
+        down, sent = {}, set()
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 0), [])
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 899), [])
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 900), ["cover.kueche"])
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 2000), [])  # nur einmal je Ausfall
+        self.assertEqual(due_unreachable(down, sent, set(), 2100), [])  # wieder da
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 2200), [])  # neuer Ausfall beginnt neu
+        self.assertEqual(due_unreachable(down, sent, {"cover.kueche"}, 3100), ["cover.kueche"])
+
+    def test_vorhang(self):
+        self.assertEqual(curtain_position(Decision(100, R.SCHEDULE), Phase.DAY), 100)
+        self.assertEqual(curtain_position(Decision(25, R.SCHEDULE), Phase.DUSK), 0)  # Sichtschutz am Abend
+        self.assertEqual(curtain_position(Decision(70, R.HEAT), Phase.DAY), 100)  # Hitzeschutz wirkt innen kaum
+        self.assertEqual(curtain_position(Decision(25, R.WINDOW_TILTED), Phase.NIGHT), 0)  # kein Lüftungsspalt
+        self.assertEqual(curtain_position(Decision(25, R.SLEEP), Phase.DAY), 0)
+        self.assertEqual(curtain_position(Decision(0, R.SITUATION), Phase.DAY), 0)  # Kinomodus
+        self.assertEqual(curtain_position(Decision(60, R.MANUAL), Phase.NIGHT), 60)
+
+    def test_richtung_in_grad(self):
+        self.assertEqual(direction_range(172), (127, 217))  # auf der Karte gemessen
+        self.assertEqual(direction_range(20), (335, 65))
+        self.assertEqual(direction_range("s"), (135, 225))
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))
