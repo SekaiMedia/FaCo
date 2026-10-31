@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable
@@ -71,6 +72,7 @@ from .const import (
     MODE_AUTO,
     MODE_DRY_RUN,
     MODE_OFF,
+    DOMAIN,
     SUBENTRY_ROOM,
 )
 from .engine import (
@@ -100,6 +102,9 @@ from .engine import (
     raining,
     safety_trigger,
     situation_hold,
+    stand_still,
+    tilt_due,
+    to_kmh,
     sleep_on,
     still_asleep,
     wake_phase,
@@ -156,6 +161,8 @@ class Room:
     decision: Decision | None = None
     state: RoomState | None = None
     manual: int | None = None
+    manual_hold: bool = False  # von Hand bewegt: alles so lassen; über eine Gruppe: hinfahren
+    wake_owner: str | None = None  # Person, zu deren Handy der Wecker gehört
     last_auto_move: float | None = None
 
 
@@ -182,6 +189,8 @@ class Conductor:
         self.vacation = False
         self._away_since: float | None = None
         self._phase_changed = 0.0
+        self._lock = asyncio.Lock()
+        self._snapshot: Any = None
         self._hot = False
         self._log = CommandLog()
         self._listeners: list[Callable[[], None]] = []
@@ -195,6 +204,14 @@ class Conductor:
             for sub in entry.subentries.values()
             if sub.subentry_type == SUBENTRY_ROOM
         ]
+        # Speichern im Panel lädt neu: Handbetrieb, Ruhezeit und eigene Befehle sollen das überstehen
+        kept = hass.data.get(DOMAIN, {}).pop("kept", None)
+        if kept:
+            self._log, self._tilt_sent = kept["log"], kept["tilt"]
+            for room in self.rooms:
+                room.manual, room.manual_hold, room.last_auto_move = kept["rooms"].get(
+                    room.subentry_id, (None, False, None)
+                )
 
     def _room(self, subentry_id: str, name: str, data: dict[str, Any]) -> Room:
         overrides = {k: v for k, v in data.get(CONF_POSITIONS, {}).items() if v is not None}
@@ -247,9 +264,14 @@ class Conductor:
             watched += room.covers
             watched += [e for e in (room.window_sensor, room.sleep_sensor, room.cooling_sensor, room.wake_sensor) if e]
             watched += [s["entity"] for s in room.situations]
+        # Messwerte, die sich ständig ändern, liest der Minutentakt; sie lösen keine eigene Rechnung aus
+        self._slow = {e for e in (self.house.get(k) for k in weather) if e and e != self.house.get(CONF_RAIN_SENSOR)}
+        self._slow |= {e for r in self.rooms for e in (r.cooling_sensor, r.sleep_sensor) if e and e.startswith("sensor.")}
+        for room in self.rooms:
+            room.wake_owner = owner(self.hass, room.wake_sensor) if room.wake_sensor else None
         self._unsubs.append(async_track_state_change_event(self.hass, watched, self._on_state))
         self._unsubs.append(
-            async_track_time_interval(self.hass, self._on_tick, timedelta(seconds=EVALUATE_INTERVAL_SECONDS))
+            async_track_time_interval(self.hass, self._on_interval, timedelta(seconds=EVALUATE_INTERVAL_SECONDS))
         )
         self._unsubs.append(
             async_track_time_interval(self.hass, self._refresh_forecast, timedelta(minutes=FORECAST_INTERVAL_MINUTES))
@@ -261,6 +283,11 @@ class Conductor:
 
     @callback
     def async_stop(self) -> None:
+        self.hass.data.setdefault(DOMAIN, {})["kept"] = {
+            "log": self._log,
+            "tilt": self._tilt_sent,
+            "rooms": {r.subentry_id: (r.manual, r.manual_hold, r.last_auto_move) for r in self.rooms},
+        }
         self.leave.async_stop()
         self.messages.async_stop()
         for unsub in self._unsubs:
@@ -289,6 +316,7 @@ class Conductor:
         if on:
             positions = self._current(room)
             room.manual = round(sum(positions.values()) / len(positions)) if positions else None
+            room.manual_hold = True
         else:
             room.manual = None
         self._schedule()
@@ -309,7 +337,7 @@ class Conductor:
         sonst fährt der Befehl direkt, weil FaCo dann selbst nichts bewegt."""
         if self.mode == MODE_AUTO:
             for room in rooms:
-                room.manual = position
+                room.manual, room.manual_hold = position, False
             self._schedule()
             return
         covers = [c for room in rooms for c in room.covers]
@@ -323,6 +351,8 @@ class Conductor:
     @callback
     def _on_state(self, event: Event[EventStateChangedData]) -> None:
         entity_id = event.data["entity_id"]
+        if entity_id in self._slow:
+            return
         # Im Probelauf fährt FaCo nie selbst, jede Fahrt käme von alten Automationen und wäre kein Handbetrieb
         if entity_id.startswith("cover.") and self.mode == MODE_AUTO:
             old, new = event.data["old_state"], event.data["new_state"]
@@ -330,19 +360,28 @@ class Conductor:
                 for room in self.rooms:
                     if entity_id in room.covers:
                         if room.manual is None:
-                            self.hass.async_create_task(self.messages.async_manual(room))
-                        room.manual = _position(new)
+                            self._task(self.messages.async_manual(room))
+                        room.manual, room.manual_hold = _position(new), True
         self._schedule()
 
     @callback
     def _schedule(self) -> None:
         """Ereignisse kurz sammeln, damit gleichzeitige Änderungen eine Entscheidung ergeben."""
-        if self._pending is None:
+        # vor dem Start nicht: dann fehlen beim Hochfahren noch Sensoren, ein offenes Fenster sähe zu aus
+        if self._pending is None and self._unsubs:
             self._pending = async_call_later(self.hass, BUNDLE_SECONDS, self._on_tick)
 
     async def _on_tick(self, _now: Any = None) -> None:
         self._pending = None
         await self.async_evaluate()
+
+    async def _on_interval(self, _now: Any = None) -> None:
+        await self.async_evaluate()
+
+    @callback
+    def _task(self, coro: Any) -> None:
+        """Meldungen im Hintergrund, beim Entladen mit beendet."""
+        self.entry.async_create_background_task(self.hass, coro, "facade_conductor_message")
 
     async def _refresh_forecast(self, _now: Any = None) -> None:
         weather = self.house.get(CONF_WEATHER)
@@ -391,15 +430,13 @@ class Conductor:
         off_for = None if on or room.last_asleep is None else now - room.last_asleep
         return still_asleep(on, off_for, room.wake_delay)
 
-    def _alarm(self, entity_id: str | None) -> float | None:
+    def _alarm(self, room: Room) -> float | None:
         """Weckzeit als Zeitstempel: Handy-Sensor mit Datum oder Datum-Zeit-Helfer, auch nur mit Uhrzeit."""
-        state = self.hass.states.get(entity_id) if entity_id else None
+        state = self.hass.states.get(room.wake_sensor) if room.wake_sensor else None
         if state is None:
             return None
         # der Wecker vom Handy einer Person zählt nur, wenn sie zu Hause ist
-        if (person := owner(self.hass, entity_id)) and away(
-            st.state if (st := self.hass.states.get(person)) else None
-        ):
+        if room.wake_owner and away(self._value(room.wake_owner)):
             return None
         value = dt_util.parse_datetime(state.state)
         if value is None and (clock := dt_util.parse_time(state.state)):
@@ -435,6 +472,10 @@ class Conductor:
         state = self.hass.states.get(entity_id) if entity_id else None
         return state.state if state else None
 
+    def _kmh(self, key: str) -> str | None:
+        state = self.hass.states.get(self.house.get(key) or "")
+        return to_kmh(state.state, state.attributes.get("unit_of_measurement")) if state else None
+
     def _warm(self, room: Room) -> bool:
         room.warm = warm_step(
             self._value(room.cooling_sensor),
@@ -451,6 +492,11 @@ class Conductor:
     # Entscheidung
 
     async def async_evaluate(self) -> None:
+        # Takt und gebündelte Ereignisse dürfen sich nicht überholen
+        async with self._lock:
+            await self._evaluate()
+
+    async def _evaluate(self) -> None:
         now = dt_util.now()
         hour = now.hour + now.minute / 60
         dark = self._dark()
@@ -470,7 +516,7 @@ class Conductor:
         safety = found[1] if found else None
         stamp = time.monotonic()
         if found and found[0] != self._safety_trigger and self.mode != MODE_OFF:
-            self.hass.async_create_task(self.messages.async_safety(*found))
+            self._task(self.messages.async_safety(*found))
         self._safety_trigger = found[0] if found else None
         if raining(self._value(self.house.get(CONF_RAIN_SENSOR))):
             self._last_rain = stamp
@@ -479,9 +525,9 @@ class Conductor:
             self._last_heavy = stamp
         wet_now = wet(self._last_heavy, stamp)
         wind_from = self._value(self.house.get(CONF_WIND_DIRECTION))
-        wind_speed = self._value(self.house.get(CONF_WIND_SPEED))
+        wind_speed = self._kmh(CONF_WIND_SPEED)
         self.wind, self._last_strong = wind_step(
-            self._last_strong, self._value(self.house.get(CONF_WIND_GUST)), float(self.house[CONF_WIND_LIMIT]), stamp
+            self._last_strong, self._kmh(CONF_WIND_GUST), float(self.house[CONF_WIND_LIMIT]), stamp
         )
         home = self.leave.anyone_home()
         self._away_since = None if home else (self._away_since or stamp)
@@ -495,7 +541,7 @@ class Conductor:
             noon = now.replace(hour=12, minute=0, second=0, microsecond=0).timestamp()
             end = noon if now.timestamp() < noon else now.timestamp() + 3600
             room.woken_until = wake_until(
-                self._alarm(room.wake_sensor), now.timestamp(), room.woken_until, room.wake_lead, end
+                self._alarm(room), now.timestamp(), room.woken_until, room.wake_lead, end
             )
             room.state = RoomState(
                 window=self._window(room),
@@ -510,9 +556,9 @@ class Conductor:
             if self._door(room):
                 # Türen nie unter die Durchgangshöhe, stattdessen eine Meldung
                 if facing_rain and room.state.window is not Window.CLOSED and not room.rain_warned:
-                    room.rain_warned = True
                     if self.mode != MODE_OFF:
-                        self.hass.async_create_task(self.messages.async_rain_door(room))
+                        room.rain_warned = True
+                        self._task(self.messages.async_rain_door(room))
                 elif not wet_now:
                     room.rain_warned = False
             else:
@@ -539,9 +585,12 @@ class Conductor:
             if room.woken_until is not None:
                 room_house = replace(room_house, phase=wake_phase(room_house.phase, dark, room.wake_wait))
             room.decision = decide(room.cfg, room.state, room_house, here)
-            if self.vacation and room.decision.reason is Reason.SCHEDULE:
+            if self.vacation and room.decision.reason is Reason.SCHEDULE and room_house.phase is not Phase.NIGHT:
                 room.decision = Decision(vacation_position(room.decision.position, delta), Reason.VACATION)
             current.update(positions)
+            situation_moves = any(s["entity"] == room.situation and s.get("position") is not None for s in room.situations)
+            if stand_still(room.decision.reason, room.manual_hold, situation_moves):
+                continue  # jeder Behang bleibt, wo er ist, statt auf das Mittel des Raums zu fahren
             if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):
                 for c in positions:
                     targets[c], tilt = self._target(room, c, room_house, here)
@@ -569,7 +618,20 @@ class Conductor:
                     room.last_auto_move = stamp
 
         if self.mode != MODE_OFF:
-            await self.messages.async_check(self.rooms, stamp)
+            self._task(self.messages.async_check(self.rooms, stamp))
+        # Entitäten nur neu schreiben, wenn sich etwas geändert hat
+        snapshot = (
+            self.mode,
+            self.phase,
+            self.frost,
+            self.wind,
+            self.vacation,
+            tuple(sorted(current.items())),
+            tuple((r.decision, r.state, r.manual, r.situation) for r in self.rooms),
+        )
+        if snapshot == self._snapshot:
+            return
+        self._snapshot = snapshot
         for update in list(self._listeners):
             update()
 
@@ -597,13 +659,8 @@ class Conductor:
 
     async def _send_tilts(self, tilts: dict[str, int]) -> None:
         for cover, tilt in tilts.items():
-            state = self.hass.states.get(cover)
-            now_tilt = state.attributes.get("current_tilt_position") if state else None
-            if now_tilt is not None and abs(int(now_tilt) - tilt) <= 2:
-                self._tilt_sent.pop(cover, None)
+            if not tilt_due(tilt, self._tilt_sent.get(cover)):
                 continue
-            if self._tilt_sent.get(cover) == tilt:
-                continue  # schon geschickt, die Jalousie stellt noch
             self._tilt_sent[cover] = tilt
             await self.hass.services.async_call(
                 "cover", "set_cover_tilt_position", {"tilt_position": tilt}, target={"entity_id": cover}, blocking=False

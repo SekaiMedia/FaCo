@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import FacadeConfigEntry
-from .const import DOMAIN, MODE_DRY_RUN, MODES
+from .const import MODE_DRY_RUN, MODES
+from .entity import hub_device
 
 
 async def async_setup_entry(
@@ -27,12 +27,7 @@ class ModeSelect(SelectEntity, RestoreEntity):
         self._conductor = entry.runtime_data
         self._attr_unique_id = f"{entry.entry_id}_mode"
         self._attr_current_option = MODE_DRY_RUN
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="Facade Conductor",
-            manufacturer="SekaiMedia",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = hub_device(entry.entry_id)
 
     async def async_added_to_hass(self) -> None:
         # Neu eingerichtet beginnt alles im Probelauf: rechnen und anzeigen, nicht fahren

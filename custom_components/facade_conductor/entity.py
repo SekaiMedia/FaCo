@@ -10,6 +10,16 @@ from .conductor import Conductor, Room
 from .const import DOMAIN, MODE_OFF
 
 
+def hub_device(entry_id: str) -> DeviceInfo:
+    """Das Hausgerät „Facade Conductor“, an dem Betriebsart, Urlaub und die Hausgruppen hängen."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry_id)},
+        name="Facade Conductor",
+        manufacturer="SekaiMedia",
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
 class RoomEntity(Entity):
     _attr_has_entity_name = True
     _attr_should_poll = False

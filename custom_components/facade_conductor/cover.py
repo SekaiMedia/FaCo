@@ -14,13 +14,12 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import FacadeConfigEntry
 from .conductor import Conductor, Room, _position
-from .const import CONF_GROUPS, DOMAIN
-from .entity import RoomEntity
+from .const import CONF_GROUPS
+from .entity import RoomEntity, hub_device
 
 
 async def async_setup_entry(
@@ -51,14 +50,8 @@ async def async_setup_entry(
             ent_reg.async_remove(old.entity_id)
     async_add_entities(groups)
 
-    dev_reg = dr.async_get(hass)
     for group in room_groups:
-        room = group.room
-        async_add_entities([group], config_subentry_id=room.subentry_id)
-        # Raumgruppen gehören in ihren Bereich, dann versteht Assist „Wohnzimmer runter“ ohne Zusatz
-        device = dev_reg.async_get_device(identifiers={(DOMAIN, room.subentry_id)})
-        if device and device.area_id is None and room.area:
-            dev_reg.async_update_device(device.id, area_id=room.area)
+        async_add_entities([group], config_subentry_id=group.room.subentry_id)
 
 
 class GroupMixin(CoverEntity):
@@ -99,12 +92,7 @@ class HubCover(GroupMixin):
         self._conductor = conductor
         self._members = members
         self._attr_unique_id = f"{conductor.entry.entry_id}_{key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, conductor.entry.entry_id)},
-            name="Facade Conductor",
-            manufacturer="SekaiMedia",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = hub_device(conductor.entry.entry_id)
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(self._conductor.add_listener(self._update))
@@ -134,6 +122,13 @@ class RoomCover(RoomEntity, GroupMixin):
         super().__init__(conductor, room, "room_covers")
         self._members = [room]
         self.room = room
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # Raumgruppen gehören in ihren Bereich, dann versteht Assist „Wohnzimmer runter“ ohne Zusatz
+        device = self.device_entry
+        if device and device.area_id is None and self.room.area:
+            dr.async_get(self.hass).async_update_device(device.id, area_id=self.room.area)
 
     @property
     def available(self) -> bool:

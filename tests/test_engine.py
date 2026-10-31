@@ -22,9 +22,11 @@ from facade_engine import (  # noqa: E402
     direction_range,
     phase_for,
     House,
-    Hysteresis,
     LuxFilter,
     blind_tilt,
+    stand_still,
+    tilt_due,
+    to_kmh,
     lagged_phase,
     rain_at_least,
     rain_in,
@@ -56,7 +58,6 @@ from facade_engine import (  # noqa: E402
     in_range,
     leave_step,
     may_move,
-    safety_position,
     situation_active,
     wake_phase,
     wake_until,
@@ -179,11 +180,6 @@ class Werkzeuge(unittest.TestCase):
         self.assertTrue(may_move(hitze, last_auto_move=0, now=1200))
         self.assertTrue(may_move(Decision(100, R.SAFETY), last_auto_move=0, now=1))
         self.assertTrue(may_move(Decision(25, R.WINDOW_TILTED), last_auto_move=0, now=1))
-
-    def test_hysterese_gegen_wolken(self):
-        h = Hysteresis(2500, 4000)
-        self.assertEqual([h.update(v) for v in (6000, 3000, 2400, 3500, 3900, 4100)],
-                         [False, False, True, True, True, False])
 
     def test_licht_gemittelt_mit_wartezeit(self):
         f = LuxFilter(2500, 4000)
@@ -308,6 +304,27 @@ class Werkzeuge(unittest.TestCase):
         self.assertEqual(vacation_position(95, 10), 100)
         self.assertEqual(vacation_position(5, -10), 0)
 
+    def test_lamellen_von_hand_bleiben(self):
+        self.assertTrue(tilt_due(45, None))  # erstes Mal
+        self.assertFalse(tilt_due(45, 45))  # schon geschickt: auch wenn jemand sie verstellt hat
+        self.assertTrue(tilt_due(100, 45))  # neues Ziel, etwa Hitze vorbei
+        self.assertFalse(tilt_due(None, 45))
+
+    def test_wind_in_kmh(self):
+        self.assertEqual(float(to_kmh("20", "m/s")), 72)
+        self.assertEqual(float(to_kmh("50", "km/h")), 50)
+        self.assertEqual(float(to_kmh("10", None)), 10)
+        self.assertAlmostEqual(float(to_kmh("10", "kn")), 18.52)
+        self.assertIsNone(to_kmh("unavailable", "m/s"))
+
+    def test_stehen_bleiben(self):
+        self.assertTrue(stand_still(R.FROST, False, True))
+        self.assertTrue(stand_still(R.MANUAL, True, True))  # von Hand bewegt: so lassen
+        self.assertFalse(stand_still(R.MANUAL, False, True))  # über die Gruppe: fahren
+        self.assertTrue(stand_still(R.SITUATION, False, False))  # Situation „halten“
+        self.assertFalse(stand_still(R.SITUATION, False, True))  # Situation mit Position
+        self.assertFalse(stand_still(R.SCHEDULE, True, False))
+
     def test_himmelsrichtung(self):
         self.assertEqual(direction_range("e"), (45, 135))
         self.assertEqual(direction_range("n"), (315, 45))
@@ -395,13 +412,14 @@ class Werkzeuge(unittest.TestCase):
         alarm = {"entity": "alarm_control_panel.alarmo", "states": ["triggered"], "home": None, "away": 0}
         rauch = {"entity": "binary_sensor.rauch", "states": ["on"], "home": 100, "away": 100}
         both = [alarm, rauch]
-        self.assertIsNone(safety_position(both, {"alarm_control_panel.alarmo": "armed_away"}, False))
-        self.assertEqual(safety_position(both, {"alarm_control_panel.alarmo": "triggered"}, False), 0)
+        self.assertIsNone(safety_trigger(both, {"alarm_control_panel.alarmo": "armed_away"}, False))
+        self.assertEqual(safety_trigger(both, {"alarm_control_panel.alarmo": "triggered"}, False), ("alarm_control_panel.alarmo", 0))
         # zu Hause tut der Alarm nichts, damit niemand eingesperrt wird
-        self.assertIsNone(safety_position(both, {"alarm_control_panel.alarmo": "triggered"}, True))
+        self.assertIsNone(safety_trigger(both, {"alarm_control_panel.alarmo": "triggered"}, True))
         # Rauch geht immer hoch, auch wenn der Alarm vorne steht und nichts tut
         self.assertEqual(
-            safety_position(both, {"alarm_control_panel.alarmo": "triggered", "binary_sensor.rauch": "on"}, True), 100
+            safety_trigger(both, {"alarm_control_panel.alarmo": "triggered", "binary_sensor.rauch": "on"}, True),
+            ("binary_sensor.rauch", 100),
         )
 
     def test_wecker(self):

@@ -61,6 +61,7 @@ const words = (s) =>
     .sort()
     .join(" ");
 const sameName = (a, b) => words(a) === words(b);
+const COLLATOR = new Intl.Collator(undefined, { sensitivity: "base" });
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -68,6 +69,14 @@ class FacadeConductorPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
+    // wer tippt, wird nicht neu gezeichnet, bis das Feld übernommen oder verlassen ist
+    this._typing = false;
+    this.shadowRoot.addEventListener("input", (e) => {
+      if (e.target.matches?.("input:not([type=checkbox]):not(.combo-input)")) this._typing = true;
+    });
+    for (const type of ["change", "focusout"]) this.shadowRoot.addEventListener(type, () => (this._typing = false));
+    this._watch = [];
+    this._loadedAt = 0;
     this._tab = "overview";
     this._room = null;
     this._info = null;
@@ -90,12 +99,26 @@ class FacadeConductorPanel extends HTMLElement {
   }
 
   set hass(hass) {
-    const first = !this._hass;
+    const old = this._hass;
     this._hass = hass;
     if (this._menu) this._menu.hass = hass;
-    if (first) this._load();
-    // hass wechselt bei jeder Zustandsänderung im Haus, daher höchstens alle 2 s nachladen
-    else if (!this._timer) this._timer = setTimeout(() => ((this._timer = null), this._load()), 2000);
+    if (!old) return void this._load();
+    if (this._timer || !this.isConnected || document.hidden) return;
+    // hass wechselt bei jeder Zustandsänderung im Haus: nachladen nur, wenn sich etwas Angezeigtes ändert,
+    // sonst spätestens alle 30 s, und höchstens alle 2 s
+    const changed = this._watch.some((id) => hass.states[id] !== old.states[id]);
+    if (changed || Date.now() - this._loadedAt > 30000)
+      this._timer = setTimeout(() => ((this._timer = null), this._load()), 2000);
+  }
+
+  connectedCallback() {
+    if (this._hass) this._load();
+  }
+
+  disconnectedCallback() {
+    clearTimeout(this._timer);
+    this._timer = null;
+    this._compassStop();
   }
 
   set panel(value) {
@@ -133,8 +156,9 @@ class FacadeConductorPanel extends HTMLElement {
   }
 
   async _load() {
-    // nicht neu zeichnen, während jemand in einem Suchfeld tippt; der nächste Takt holt es nach
-    if (this.shadowRoot.activeElement?.classList.contains("combo-input")) return;
+    // nicht neu zeichnen, während jemand tippt; der nächste Takt holt es nach
+    if (this._typing || this.shadowRoot.activeElement?.classList.contains("combo-input")) return;
+    this._loadedAt = Date.now();
     let info = null;
     let error = null;
     try {
@@ -145,6 +169,9 @@ class FacadeConductorPanel extends HTMLElement {
     // nur neu zeichnen, wenn sich etwas Sichtbares geändert hat, sonst springt der Cursor
     const windows = (info?.rooms || []).map((r) => this._stateText(r.data.window_sensor)).join("|");
     const key = JSON.stringify([info, error, windows]);
+    this._watch = info
+      ? [info.mode_entity, info.vacation_entity, ...info.rooms.flatMap((r) => [r.reason_entity, r.manual_entity, r.data.window_sensor, ...(r.data.covers || [])])].filter(Boolean)
+      : [];
     if (key === this._key) return;
     this._key = key;
     this._info = info;
@@ -181,7 +208,9 @@ class FacadeConductorPanel extends HTMLElement {
   _render() {
     const root = this.shadowRoot;
     // ein Suchfeld nach der Auswahl nicht wieder fokussieren, sonst öffnet sich die Liste erneut
-    const focused = root.activeElement?.classList.contains("combo-input") ? null : root.activeElement?.id;
+    const active = root.activeElement;
+    const focused = !active || active.classList.contains("combo-input") ? null : this._selector(active);
+    this._all = Object.keys(this._hass.states);
     this._combos = {};
     const info = this._info;
     const body = this._error
@@ -210,8 +239,25 @@ class FacadeConductorPanel extends HTMLElement {
     this._menu = root.querySelector("ha-menu-button");
     this._menu.hass = this._hass;
     this._menu.narrow = this._narrow;
-    if (focused) root.getElementById(focused)?.focus();
+    if (focused) root.querySelector(focused)?.focus();
     this._bind();
+  }
+
+  // Wiederfinden eines Elements nach dem Neuzeichnen: über die id, sonst über seine data-Merkmale und den Wert
+  _selector(el) {
+    if (el.id) return `#${CSS.escape(el.id)}`;
+    const names = el.getAttributeNames().filter((n) => n.startsWith("data-") || (n === "value" && el.type === "checkbox"));
+    if (!names.length) return null;
+    return el.tagName.toLowerCase() + names.map((n) => `[${n}="${CSS.escape(el.getAttribute(n))}"]`).join("");
+  }
+
+  async _service(domain, service, data, delay) {
+    try {
+      await this._hass.callService(domain, service, data);
+    } catch (err) {
+      this._flash(this._t("error", { msg: err.message || err.code }));
+    }
+    setTimeout(() => this._load(), delay);
   }
 
   _modes(info) {
@@ -297,10 +343,14 @@ class FacadeConductorPanel extends HTMLElement {
     const h = info.house;
     const chosen = new Set(h.leave_contacts || []);
     const excluded = new Set(h.leave_exclude_persons || []);
-    const contacts = Object.keys(this._hass.states)
-      .filter((id) => id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id].attributes.device_class))
+    const contacts = [
+      ...new Set([
+        ...this._all.filter((id) => id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id].attributes.device_class)),
+        ...chosen,
+      ]),
+    ]
       .sort((a, b) => this._name(a).localeCompare(this._name(b)));
-    const isDoor = (id) => ["door", "garage_door"].includes(this._hass.states[id].attributes.device_class);
+    const isDoor = (id) => ["door", "garage_door"].includes(this._hass.states[id]?.attributes.device_class);
     const household = info.persons.filter((person) => !excluded.has(person.id)).length;
     return [
       h.leave_enabled ? this._t("sum_leave", { contacts: chosen.size, persons: household }) : this._t("off"),
@@ -345,7 +395,7 @@ class FacadeConductorPanel extends HTMLElement {
          .join("")}
        <div class="positions">
          <label class="field">${esc(this._t("situation_entity"))}
-           ${this._combo("x-entity", "draft", "safety", Object.keys(this._hass.states), this._draft.safety)}</label>
+           ${this._combo("x-entity", "draft", "safety", this._all, this._draft.safety)}</label>
          <label class="field">${esc(this._t("situation_states"))}
            <input id="x-states" class="filter" value="${esc(this._draft.xstates || "")}" placeholder="on"></label>
          <label class="field">${esc(this._t("safety_home"))}
@@ -361,7 +411,7 @@ class FacadeConductorPanel extends HTMLElement {
     const h = info.house;
     const events = ["unreachable", "manual", "safety", "rain"];
     const on = events.filter((e) => h[`notify_${e}`] || h[`announce_${e}`]).map((e) => this._t(`msg_${e}`));
-    const speakers = Object.keys(this._hass.states).filter((id) => id.startsWith("notify."));
+    const speakers = this._all.filter((id) => id.startsWith("notify."));
     return [
       on.length ? on.join(" · ") : this._t("off"),
       `${events
@@ -383,7 +433,7 @@ class FacadeConductorPanel extends HTMLElement {
     const on = GROUPS.filter((g) => levels.has(g)).map((g) => this._t(`group_${g}`));
     // Gruppen, die es in Home Assistant schon gibt, etwa „Rolladen - Erdgeschoss“
     const own = new Set((info.voice || []).map((g) => g.entity_id));
-    const groups = Object.keys(this._hass.states).filter(
+    const groups = this._all.filter(
       (id) => id.startsWith("cover.") && !own.has(id) && Array.isArray(this._hass.states[id].attributes.entity_id),
     );
     const rows = (info.voice || [])
@@ -413,7 +463,7 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_heat(info) {
     const h = info.house;
-    const weathers = Object.keys(this._hass.states).filter((id) => id.startsWith("weather."));
+    const weathers = this._all.filter((id) => id.startsWith("weather."));
     return [
       h.weather
         ? this._t("sum_heat", { t: h.hot_temperature, shade: info.positions.shade, weather: this._name(h.weather) })
@@ -430,7 +480,7 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_daylight(info) {
     const h = info.house;
-    const lux = Object.keys(this._hass.states).filter(
+    const lux = this._all.filter(
       (id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "illuminance",
     );
     const num = (key) => this._houseInput(key, 'type="number" min="0" max="100000" step="50"');
@@ -449,14 +499,14 @@ class FacadeConductorPanel extends HTMLElement {
   _sec_weather(info) {
     const h = info.house;
     const sensors = (cls) =>
-      Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && cls.includes(this._hass.states[id].attributes.device_class));
-    const rain = Object.keys(this._hass.states).filter(
+      this._all.filter((id) => id.startsWith("sensor.") && cls.includes(this._hass.states[id].attributes.device_class));
+    const rain = this._all.filter(
       (id) =>
         (id.startsWith("sensor.") && ["precipitation_intensity", "precipitation"].includes(this._hass.states[id].attributes.device_class)) ||
         (id.startsWith("binary_sensor.") && this._hass.states[id].attributes.device_class === "moisture") ||
         /rain|regen/.test(id),
     );
-    const directions = Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && /wind.*(dir|richtung)|bearing/.test(id));
+    const directions = this._all.filter((id) => id.startsWith("sensor.") && /wind.*(dir|richtung)|bearing/.test(id));
     const on = [
       h.outdoor_temp && h.rain_sensor && this._t("frost_short"),
       h.rain_sensor && this._t("rain_short"),
@@ -562,7 +612,7 @@ class FacadeConductorPanel extends HTMLElement {
     const list = info.rooms
       .map(
         (r) =>
-          `<button class="room" data-room="${esc(r.id)}" aria-selected="${r.id === this._room}"><span>${esc(r.name)}</span><span class="muted">${esc(pct(r.position))}</span></button>`,
+          `<button class="room" data-room="${esc(r.id)}" aria-current="${r.id === this._room}"><span>${esc(r.name)}</span><span class="muted">${esc(pct(r.position))}</span></button>`,
       )
       .join("");
     const add = free.length
@@ -604,13 +654,16 @@ class FacadeConductorPanel extends HTMLElement {
     const selectedName = () => (input.dataset.selected ? this._name(input.dataset.selected) : "");
     let shown = [];
     let active = -1;
+    let items = null;
     const draw = () => {
+      // erst beim Öffnen und nur einmal je Liste sortieren, danach nur noch filtern
+      items ??= ids.map((id) => [id, this._searchText(id), this._name(id)]).sort((a, b) => COLLATOR.compare(a[2], b[2]));
       // steht noch der gewählte Name im Feld, alles zeigen
       const query = input.value === selectedName() ? "" : input.value;
-      shown = ids
-        .filter((id) => matches(query, this._searchText(id)))
-        .sort((a, b) => this._name(a).localeCompare(this._name(b)))
-        .slice(0, 50);
+      shown = items
+        .filter(([, text]) => matches(query, text))
+        .slice(0, 50)
+        .map(([id]) => id);
       active = Math.min(active, shown.length - 1);
       list.innerHTML = shown.length
         ? shown
@@ -761,6 +814,13 @@ class FacadeConductorPanel extends HTMLElement {
     else start();
   }
 
+  _leaveRoom() {
+    this._compassStop();
+    this._map = null;
+    this._draft = {};
+    this._coverFilter = "";
+  }
+
   _compassStop() {
     this._compass?.stop?.();
     this._compass = null;
@@ -768,9 +828,9 @@ class FacadeConductorPanel extends HTMLElement {
 
   _roomForm(room, info) {
     const d = room.data;
-    const all = Object.keys(this._hass.states);
-    const covers = all
-      .filter((id) => id.startsWith("cover."))
+    const all = this._all;
+    // gewählte Rollläden bleiben in der Liste, auch wenn es sie gerade nicht gibt; sonst gingen sie beim Speichern verloren
+    const covers = [...new Set([...all.filter((id) => id.startsWith("cover.")), ...(d.covers || [])])]
       .sort(
         (a, b) =>
           (this._area(b) === d.area) - (this._area(a) === d.area) || this._name(a).localeCompare(this._name(b)),
@@ -797,9 +857,9 @@ class FacadeConductorPanel extends HTMLElement {
             .map(
               (id) =>
                 `<label data-cover-label="${esc(this._searchText(id))}"><input type="checkbox" data-cover value="${esc(id)}" ${chosen.has(id) ? "checked" : ""}> ${esc(this._name(id))}${
-                  this._hass.states[id].attributes.device_class === "curtain"
+                  this._hass.states[id]?.attributes.device_class === "curtain"
                     ? ` <span class="muted">· ${esc(this._t("curtain"))}</span>`
-                    : this._hass.states[id].attributes.device_class === "blind" || (this._hass.states[id].attributes.supported_features & 128)
+                    : this._hass.states[id]?.attributes.device_class === "blind" || (this._hass.states[id]?.attributes.supported_features & 128)
                       ? ` <span class="muted">· ${esc(this._t("blind"))}</span>`
                       : ""
                 }</label>`,
@@ -835,7 +895,7 @@ class FacadeConductorPanel extends HTMLElement {
           .join("") || `<p class="muted">${esc(this._t("no_situations"))}</p>`}
         <div class="positions">
           <label class="field">${esc(this._t("situation_entity"))}
-            ${this._combo("s-entity", "draft", "situation", Object.keys(this._hass.states), this._draft.situation)}</label>
+            ${this._combo("s-entity", "draft", "situation", this._all, this._draft.situation)}</label>
           <label class="field">${esc(this._t("situation_states"))}
             <input id="s-states" class="filter" value="${esc(this._draft.states || "")}" placeholder="on"></label>
           <label class="field">${esc(this._t("situation_position"))}
@@ -875,7 +935,7 @@ class FacadeConductorPanel extends HTMLElement {
       <div class="card">
         <h3>${esc(this._t("cooling"))}</h3>
         <label class="field">${esc(this._t("cooling_sensor"))}
-          ${this._combo("f-cooling", "room", "cooling_sensor", Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature"), d.cooling_sensor)}</label>
+          ${this._combo("f-cooling", "room", "cooling_sensor", this._all.filter((id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature"), d.cooling_sensor)}</label>
         <label class="field">${esc(this._t("cooling_above"))}
           <input id="f-cooling-above" type="number" min="10" max="40" step="0.5" data-field="cooling_above"
             value="${esc(d.cooling_above ?? "")}" placeholder="24"></label>
@@ -909,7 +969,7 @@ class FacadeConductorPanel extends HTMLElement {
       <div class="card">
         <h3>${esc(this._t("wake"))}</h3>
         <label class="field">${esc(this._t("wake_sensor"))}
-          ${this._combo("f-wake-sensor", "room", "wake_sensor", Object.keys(this._hass.states).filter((id) => id.startsWith("input_datetime.") || (id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "timestamp")), d.wake_sensor)}</label>
+          ${this._combo("f-wake-sensor", "room", "wake_sensor", this._all.filter((id) => id.startsWith("input_datetime.") || (id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "timestamp")), d.wake_sensor)}</label>
         <div class="positions">
           <label class="field">${esc(this._t("wake_lead"))}
             <input id="f-wake-lead" type="number" min="0" max="120" step="1" data-field="wake_lead" value="${esc(d.wake_lead ?? "")}" placeholder="0"></label>
@@ -946,33 +1006,25 @@ class FacadeConductorPanel extends HTMLElement {
   _bind() {
     const root = this.shadowRoot;
     root.querySelectorAll("[data-tab]").forEach((el) =>
-      el.addEventListener("click", () => ((this._tab = el.dataset.tab), this._render())),
+      el.addEventListener("click", () => (this._compassStop(), (this._tab = el.dataset.tab), this._render())),
     );
     root.querySelectorAll("[data-resume]").forEach((el) =>
-      el.addEventListener("click", async () => {
-        await this._hass.callService("switch", "turn_off", { entity_id: el.dataset.resume });
-        this._flash(this._t("saved"));
-        setTimeout(() => this._load(), 2500);
-      }),
+      el.addEventListener("click", () => this._service("switch", "turn_off", { entity_id: el.dataset.resume }, 2500)),
     );
     root.querySelectorAll("[data-open]").forEach((el) =>
-      el.addEventListener("click", () => ((this._tab = "rooms"), (this._room = el.dataset.open), this._render())),
+      el.addEventListener("click", () => (this._leaveRoom(), (this._tab = "rooms"), (this._room = el.dataset.open), this._render())),
     );
     root.querySelector("[data-help]")?.addEventListener("click", () => ((this._help = !this._help), this._render()));
     root.querySelectorAll("[data-section]").forEach((el) =>
       el.addEventListener("toggle", () => (el.open ? this._open.add(el.dataset.section) : this._open.delete(el.dataset.section))),
     );
     root.querySelectorAll("[data-room]").forEach((el) =>
-      el.addEventListener("click", () => ((this._room = el.dataset.room), this._render())),
+      el.addEventListener("click", () => (this._leaveRoom(), (this._room = el.dataset.room), this._render())),
     );
     root.querySelectorAll("[data-mode]").forEach((el) =>
-      el.addEventListener("click", async () => {
-        await this._hass.callService("select", "select_option", {
-          entity_id: this._info.mode_entity,
-          option: el.dataset.mode,
-        });
-        setTimeout(() => this._load(), 300);
-      }),
+      el.addEventListener("click", () =>
+        this._service("select", "select_option", { entity_id: this._info.mode_entity, option: el.dataset.mode }, 300),
+      ),
     );
     root.querySelector("[data-action=add]")?.addEventListener("click", async () => {
       const area = root.getElementById("add-area").value;
@@ -1112,11 +1164,9 @@ class FacadeConductorPanel extends HTMLElement {
       this._compassStop();
       save({ direction_deg: deg });
     });
-    root.querySelector("[data-vacation]")?.addEventListener("change", async (e) => {
-      await this._hass.callService("switch", e.target.checked ? "turn_on" : "turn_off", { entity_id: this._info.vacation_entity });
-      this._flash(this._t("saved"));
-      setTimeout(() => this._load(), 1000);
-    });
+    root.querySelector("[data-vacation]")?.addEventListener("change", (e) =>
+      this._service("switch", e.target.checked ? "turn_on" : "turn_off", { entity_id: this._info.vacation_entity }, 1000),
+    );
     root.getElementById("f-cooling-outside")?.addEventListener("change", (e) => save({ cooling_outside: e.target.checked }));
     root.querySelectorAll("[data-cover-dir]").forEach((el) =>
       el.addEventListener("change", () => {
@@ -1191,7 +1241,6 @@ const STYLE = `
   .tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--divider-color); background: var(--card-background-color); }
   .tabs button { font: inherit; font-size: 14px; font-weight: 500; min-height: 48px; padding: 0 16px; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--secondary-text-color); cursor: pointer; }
   .tabs button[aria-selected="true"] { color: var(--primary-color); border-bottom-color: var(--primary-color); }
-  .more { margin-left: auto; font-size: 14px; color: var(--primary-color); padding: 12px 0; }
   .content { padding: 16px; max-width: 1200px; display: flex; flex-direction: column; gap: 16px; }
   .card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius, 12px); border: 1px solid var(--divider-color); padding: 16px; display: flex; flex-direction: column; gap: 12px; color: inherit; font: inherit; text-align: left; }
   h2 { margin: 0; font-size: 18px; font-weight: 500; } h3 { margin: 0; font-size: 16px; font-weight: 500; }
@@ -1237,7 +1286,7 @@ const STYLE = `
   @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
   .list { gap: 4px; padding: 8px; }
   .room { font: inherit; display: flex; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: none; color: inherit; cursor: pointer; text-align: left; }
-  .room[aria-selected="true"] { background: rgba(var(--rgb-primary-color, 3, 169, 244), .2); }
+  .room[aria-current="true"] { background: rgba(var(--rgb-primary-color, 3, 169, 244), .2); }
   .add { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--divider-color); padding-top: 12px; margin-top: 8px; }
   .detail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
   .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--secondary-text-color); }

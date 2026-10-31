@@ -249,6 +249,34 @@ def wind_step(last_strong: float | None, gust: str | None, limit: float, now: fl
     return last_strong is not None and now - last_strong < WIND_CALM_AFTER, last_strong
 
 
+def tilt_due(target: int | None, last_sent: int | None) -> bool:
+    """Lamellen nur stellen, wenn sich das Ziel ändert. Wer sie danach von Hand verstellt, behält seinen Winkel."""
+    return target is not None and target != last_sent
+
+
+WIND_UNITS = {"km/h": 1, "m/s": 3.6, "mph": 1.609, "kn": 1.852, "ft/s": 1.097}
+
+
+def to_kmh(value: str | None, unit: str | None) -> str | None:
+    """Windmessung in km/h, egal in welcher Einheit die Station misst."""
+    try:
+        return str(float(value) * WIND_UNITS.get(unit or "km/h", 1))
+    except (TypeError, ValueError):
+        return None
+
+
+def stand_still(reason: Reason, manual_hold: bool, situation_moves: bool) -> bool:
+    """Gründe, bei denen jeder Behang bleibt, wo er steht, statt dem Mittel des Raums zu folgen.
+
+    Frost: nichts bewegen. Handbetrieb von Hand: so lassen. Situation ohne eigene Position: halten.
+    """
+    return (
+        reason is Reason.FROST
+        or (reason is Reason.MANUAL and manual_hold)
+        or (reason is Reason.SITUATION and not situation_moves)
+    )
+
+
 def blind_tilt(reason: Reason, phase: Phase, sun_tilt: int) -> int | None:
     """Lamellen der Jalousie: bei Hitzeschutz schräg gegen direkte Sonne, tagsüber offen, sonst zu.
 
@@ -354,11 +382,6 @@ def safety_trigger(triggers: list[dict], states: dict[str, str | None], anyone_h
             if position is not None:
                 return trigger["entity"], position
     return None
-
-
-def safety_position(triggers: list[dict], states: dict[str, str | None], anyone_home: bool) -> int | None:
-    found = safety_trigger(triggers, states, anyone_home)
-    return found[1] if found else None
 
 
 def situation_hold(
@@ -528,18 +551,4 @@ class LuxFilter:
         hold = self.hold * (2 if max(values) - min(values) > mean else 1)
         if now - self._since >= hold:
             self.dark, self._since = wants, None
-        return self.dark
-
-
-class Hysteresis:
-    """Zwei Schwellen gegen Hin und Her: dunkel unter low, wieder hell erst über high."""
-
-    def __init__(self, low: float, high: float, dark: bool = False) -> None:
-        self.low, self.high, self.dark = low, high, dark
-
-    def update(self, value: float) -> bool:
-        if self.dark and value > self.high:
-            self.dark = False
-        elif not self.dark and value < self.low:
-            self.dark = True
         return self.dark
