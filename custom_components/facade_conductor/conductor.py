@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
+from homeassistant.components.cover import CoverEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
@@ -38,7 +39,14 @@ from .const import (
     CONF_NIGHT_START,
     CONF_OUTDOOR_TEMP,
     CONF_POSITIONS,
+    CONF_RAIN_LEVEL,
     CONF_RAIN_SENSOR,
+    CONF_SLAT_TILT,
+    CONF_VACATION_AFTER,
+    CONF_WIND_DIRECTION,
+    CONF_WIND_GUST,
+    CONF_WIND_LIMIT,
+    CONF_WIND_SPEED,
     CONF_REST_MINUTES,
     CONF_SAFETY,
     CONF_SLEEP_PAUSE_END,
@@ -66,31 +74,41 @@ from .const import (
     SUBENTRY_ROOM,
 )
 from .engine import (
+    DIRECTIONS,
     CommandLog,
     Decision,
     House,
     LuxFilter,
     Phase,
     Positions,
+    Reason,
     RoomConfig,
     RoomState,
     Window,
     away,
     batch,
+    blind_tilt,
     curtain_position,
     decide,
     direction_range,
     may_move,
     frost_step,
+    lagged_phase,
     phase_for,
+    rain_at_least,
+    rain_in,
     raining,
     safety_trigger,
     situation_hold,
     sleep_on,
     still_asleep,
     wake_phase,
+    vacation_offset,
+    vacation_position,
     wake_until,
     warm_step,
+    wet,
+    wind_step,
 )
 from .leave import LeaveWatcher, owner
 from .messages import Messages
@@ -127,6 +145,9 @@ class Room:
     cooling_outside: bool = False  # nur offen lassen, wenn es draußen kühler ist
     warm: bool = False
     cover_azimuth: dict[str, tuple[float, float]] = field(default_factory=dict)  # Eckzimmer
+    facing: float | None = None  # Blickrichtung des Fensters in Grad, für Regen
+    rain_warned: bool = False  # Regen auf offene Tür schon gemeldet
+    vacation_phase: Phase | None = None
     wake_sensor: str | None = None
     wake_lead: float = 0
     wake_wait: bool = False  # im Dunkeln erst bei Helligkeit öffnen
@@ -153,6 +174,14 @@ class Conductor:
         # shortcut: Regen nur seit dem Start gemerkt; nach einem Neustart greift Frostschutz erst beim nächsten Regen
         self._last_rain: float | None = None
         self._safety_trigger: str | None = None
+        self._last_heavy: float | None = None  # letzter Regen ab der gewählten Stufe
+        self.wind = False
+        self._last_strong: float | None = None
+        self._tilt_sent: dict[str, int] = {}
+        self.vacation_switch = False
+        self.vacation = False
+        self._away_since: float | None = None
+        self._phase_changed = 0.0
         self._hot = False
         self._log = CommandLog()
         self._listeners: list[Callable[[], None]] = []
@@ -197,6 +226,9 @@ class Conductor:
             cooling_above=float(data.get(CONF_COOLING_ABOVE) or DEFAULT_COOLING_ABOVE),
             cooling_outside=bool(data.get(CONF_COOLING_OUTSIDE)),
             cover_azimuth={c: direction_range(d) for c, d in (data.get(CONF_COVER_DIRECTIONS) or {}).items()},
+            facing=float(data[CONF_DIRECTION_DEG])
+            if data.get(CONF_DIRECTION_DEG) is not None
+            else DIRECTIONS.get(direction),
             speaker=data.get(CONF_SPEAKER),
             wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
             sleep_watts=float(data.get(CONF_SLEEP_WATTS) or DEFAULT_SLEEP_WATTS)
@@ -209,7 +241,8 @@ class Conductor:
     async def async_start(self) -> None:
         # Personen zählen für „jemand zu Hause“ bei der Sicherheit
         watched = [SUN, *(t["entity"] for t in self.safety), *(self.leave.persons if self.safety else [])]
-        watched += [e for e in (self.house.get(k) for k in (CONF_LUX_SENSOR, CONF_OUTDOOR_TEMP, CONF_RAIN_SENSOR)) if e]
+        weather = (CONF_LUX_SENSOR, CONF_OUTDOOR_TEMP, CONF_RAIN_SENSOR, CONF_WIND_DIRECTION, CONF_WIND_SPEED, CONF_WIND_GUST)
+        watched += [e for e in (self.house.get(k) for k in weather) if e]
         for room in self.rooms:
             watched += room.covers
             watched += [e for e in (room.window_sensor, room.sleep_sensor, room.cooling_sensor, room.wake_sensor) if e]
@@ -258,6 +291,11 @@ class Conductor:
             room.manual = round(sum(positions.values()) / len(positions)) if positions else None
         else:
             room.manual = None
+        self._schedule()
+
+    @callback
+    def set_vacation(self, on: bool) -> None:
+        self.vacation_switch = on
         self._schedule()
 
     @callback
@@ -376,6 +414,19 @@ class Conductor:
         """Keine Durchsagen nachts und solange in einem Raum jemand schläft."""
         return self.phase is Phase.NIGHT or any(r.state is not None and r.state.asleep for r in self.rooms)
 
+    def _blind(self, entity_id: str) -> bool:
+        """Jalousie oder Raffstore: eigene Geräteart oder Lamellen, die sich stellen lassen."""
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+        return state.attributes.get("device_class") == "blind" or bool(
+            int(state.attributes.get("supported_features") or 0) & CoverEntityFeature.SET_TILT_POSITION
+        )
+
+    def _door(self, room: Room) -> bool:
+        state = self.hass.states.get(room.window_sensor) if room.window_sensor else None
+        return state is not None and state.attributes.get("device_class") in ("door", "garage_door")
+
     def _curtain(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
         return state is not None and state.attributes.get("device_class") == "curtain"
@@ -409,6 +460,7 @@ class Conductor:
             for room in self.rooms:
                 room.manual = None
             self.phase = phase
+            self._phase_changed = time.monotonic()
         sun = self.hass.states.get(SUN)
         azimuth = sun.attributes.get("azimuth") if sun else None
         house = House(phase, hour, hot=self._hot, sun_azimuth=azimuth)
@@ -423,6 +475,19 @@ class Conductor:
         if raining(self._value(self.house.get(CONF_RAIN_SENSOR))):
             self._last_rain = stamp
         self.frost = frost_step(self.frost, self._value(self.house.get(CONF_OUTDOOR_TEMP)), self._last_rain, stamp)
+        if rain_at_least(self._value(self.house.get(CONF_RAIN_SENSOR)), self.house[CONF_RAIN_LEVEL]):
+            self._last_heavy = stamp
+        wet_now = wet(self._last_heavy, stamp)
+        wind_from = self._value(self.house.get(CONF_WIND_DIRECTION))
+        wind_speed = self._value(self.house.get(CONF_WIND_SPEED))
+        self.wind, self._last_strong = wind_step(
+            self._last_strong, self._value(self.house.get(CONF_WIND_GUST)), float(self.house[CONF_WIND_LIMIT]), stamp
+        )
+        home = self.leave.anyone_home()
+        self._away_since = None if home else (self._away_since or stamp)
+        after = float(self.house[CONF_VACATION_AFTER]) * 3600
+        self.vacation = self.vacation_switch or bool(after and self._away_since and stamp - self._away_since >= after)
+        tilts: dict[str, int] = {}
         targets: dict[str, int] = {}
         current: dict[str, int] = {}
         moving: list[Room] = []
@@ -439,7 +504,19 @@ class Conductor:
                 manual=room.manual,
                 safety=safety,
                 frost=self.frost,
+                wind=self.wind and any(self._blind(c) for c in room.covers),
             )
+            facing_rain = wet_now and rain_in(room.facing, wind_from, wind_speed)
+            if self._door(room):
+                # Türen nie unter die Durchgangshöhe, stattdessen eine Meldung
+                if facing_rain and room.state.window is not Window.CLOSED and not room.rain_warned:
+                    room.rain_warned = True
+                    if self.mode != MODE_OFF:
+                        self.hass.async_create_task(self.messages.async_rain_door(room))
+                elif not wet_now:
+                    room.rain_warned = False
+            else:
+                room.state = replace(room.state, rain=facing_rain)
             positions = self._current(room)
             if not positions:
                 room.decision = None
@@ -451,12 +528,25 @@ class Conductor:
             room.situation, room.held, hold = situation_hold(room.situations, states, here, room.situation, room.held)
             room.state = replace(room.state, hold=hold)
             room_house = house
+            delta = 0
+            if self.vacation:
+                # bewohnt wirken: jeder Raum folgt der Tagesphase mit eigenem Versatz
+                offset, delta = vacation_offset(f"{room.subentry_id}{now.date()}")
+                room.vacation_phase = lagged_phase(room.vacation_phase, phase, self._phase_changed, stamp, offset)
+                room_house = replace(house, phase=room.vacation_phase)
+            else:
+                room.vacation_phase = None
             if room.woken_until is not None:
-                room_house = replace(house, phase=wake_phase(phase, dark, room.wake_wait))
+                room_house = replace(room_house, phase=wake_phase(room_house.phase, dark, room.wake_wait))
             room.decision = decide(room.cfg, room.state, room_house, here)
+            if self.vacation and room.decision.reason is Reason.SCHEDULE:
+                room.decision = Decision(vacation_position(room.decision.position, delta), Reason.VACATION)
             current.update(positions)
             if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):
-                targets.update({c: self._target(room, c, room_house, here) for c in positions})
+                for c in positions:
+                    targets[c], tilt = self._target(room, c, room_house, here)
+                    if tilt is not None:
+                        tilts[c] = tilt
                 moving.append(room)
 
         if self.mode == MODE_AUTO and targets:
@@ -473,6 +563,7 @@ class Conductor:
                     blocking=False,
                 )
             sent = {e for ids in plan.values() for e in ids}
+            await self._send_tilts(tilts)
             for room in moving:
                 if sent.intersection(room.covers):
                     room.last_auto_move = stamp
@@ -482,14 +573,41 @@ class Conductor:
         for update in list(self._listeners):
             update()
 
-    def _target(self, room: Room, cover: str, house: House, here: int) -> int:
+    def _target(self, room: Room, cover: str, house: House, here: int) -> tuple[int, int | None]:
+        """Position und Lamellenwinkel eines Behangs; der Winkel nur bei Jalousien."""
         if self._curtain(cover):
-            return curtain_position(room.decision, house.phase)
+            return curtain_position(room.decision, house.phase), None
+        blind = self._blind(cover)
+        decision, state, cfg = room.decision, room.state, room.cfg
+        if state.wind and not blind:
+            # Sturm hebt nur Jalousien, Rollläden im selben Raum bleiben
+            state = replace(state, wind=False)
         if cover in room.cover_azimuth:
             # Eckzimmer: dieser Rollladen sieht die Sonne zu anderen Zeiten als der Raum
-            cfg = replace(room.cfg, sun_azimuth=room.cover_azimuth[cover])
-            return decide(cfg, room.state, house, here).position
-        return room.decision.position
+            cfg = replace(cfg, sun_azimuth=room.cover_azimuth[cover])
+        if state is not room.state or cfg is not room.cfg:
+            decision = decide(cfg, state, house, here)
+            if decision.reason is Reason.SCHEDULE and room.decision.reason is Reason.VACATION:
+                decision = room.decision
+        if not blind:
+            return decision.position, None
+        tilt = blind_tilt(decision.reason, house.phase, int(self.house[CONF_SLAT_TILT]))
+        # bei Hitze ganz runter, die schrägen Lamellen lassen Licht herein, aber keine direkte Sonne
+        return (0 if decision.reason is Reason.HEAT else decision.position), tilt
+
+    async def _send_tilts(self, tilts: dict[str, int]) -> None:
+        for cover, tilt in tilts.items():
+            state = self.hass.states.get(cover)
+            now_tilt = state.attributes.get("current_tilt_position") if state else None
+            if now_tilt is not None and abs(int(now_tilt) - tilt) <= 2:
+                self._tilt_sent.pop(cover, None)
+                continue
+            if self._tilt_sent.get(cover) == tilt:
+                continue  # schon geschickt, die Jalousie stellt noch
+            self._tilt_sent[cover] = tilt
+            await self.hass.services.async_call(
+                "cover", "set_cover_tilt_position", {"tilt_position": tilt}, target={"entity_id": cover}, blocking=False
+            )
 
     def _rest(self) -> float:
         return float(self.house[CONF_REST_MINUTES]) * 60

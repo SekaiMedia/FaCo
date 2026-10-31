@@ -39,7 +39,9 @@ Regeln, die Fensterrichtung lässt sich auf einer Karte oder mit dem Kompass des
 im Eckzimmer auch je Rollladen.
 Auf Wunsch kommen Meldungen per Push oder Durchsage, wenn ein Rollladen nicht erreichbar ist oder
 ein Raum in Handbetrieb geht, und bei Sicherheit auch nachts. Ein nicht erreichbarer Rollladen steht
-zusätzlich bei den Reparaturen. Noch nicht enthalten: Regenschutz, Wind und Urlaubsmodus.
+zusätzlich bei den Reparaturen. Weht Regen ins offene Fenster, fährt der Rollladen auf einen
+Regenspalt; Jalousien stellen bei Hitze ihre Lamellen schräg und fahren bei Sturm hoch. Im Urlaub
+folgt jeder Raum dem Tagesablauf leicht versetzt, damit das Haus bewohnt wirkt.
 
 Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Version vom November,
 `2026.11.0-beta.1` eine Beta dafür. Die Nummer sagt, wann eine Version erschien, nicht für welche
@@ -104,7 +106,9 @@ the house, each floor and each room work by voice (each level optional, with its
 curtains get their own rules and the window direction can be set on a map or with the phone's
 compass, per shutter in corner rooms. Optional push messages or announcements report unreachable
 shutters, manual mode and safety, the latter also at night; unreachable shutters also show up in
-Repairs. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
+Repairs. Rain blowing into an open window moves the shutter to a rain gap, venetian blinds tilt
+their slats against the sun and go up in a storm, and a vacation mode staggers each room's schedule
+so the house looks lived in. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
 **Installation (beta):**
 

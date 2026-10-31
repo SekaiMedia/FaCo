@@ -28,6 +28,16 @@ CONF_NOTIFY_SAFETY = "notify_safety"
 CONF_ANNOUNCE_SAFETY = "announce_safety"
 CONF_OUTDOOR_TEMP = "outdoor_temp"
 CONF_RAIN_SENSOR = "rain_sensor"
+CONF_RAIN_LEVEL = "rain_level"
+RAIN_LEVEL_OPTIONS = ["light", "moderate", "heavy"]
+CONF_WIND_DIRECTION = "wind_direction"
+CONF_WIND_SPEED = "wind_speed"
+CONF_WIND_GUST = "wind_gust"
+CONF_WIND_LIMIT = "wind_limit"
+CONF_SLAT_TILT = "slat_tilt"
+CONF_VACATION_AFTER = "vacation_after"
+CONF_NOTIFY_RAIN = "notify_rain"
+CONF_ANNOUNCE_RAIN = "announce_rain"
 GROUP_OPTIONS = ["house", "floor", "room"]
 
 # Raum
@@ -55,8 +65,8 @@ CONF_DIRECTION_DEG = "direction_deg"
 CONF_SITUATIONS = "situations"
 CONF_ADVANCED = "advanced"
 
-POSITION_KEYS = ("day", "dusk", "night", "tilted", "open", "shade")
-DEFAULT_POSITIONS = {"day": 100, "dusk": 25, "night": 0, "tilted": 25, "open": 100, "shade": 70}
+POSITION_KEYS = ("day", "dusk", "night", "tilted", "open", "shade", "rain")
+DEFAULT_POSITIONS = {"day": 100, "dusk": 25, "night": 0, "tilted": 25, "open": 100, "shade": 70, "rain": 10}
 
 DEFAULTS = {
     CONF_HOT_TEMPERATURE: 23,
@@ -80,6 +90,16 @@ DEFAULTS = {
     CONF_ANNOUNCE_SAFETY: False,
     CONF_OUTDOOR_TEMP: None,
     CONF_RAIN_SENSOR: None,
+    CONF_RAIN_LEVEL: "light",
+    CONF_WIND_DIRECTION: None,
+    CONF_WIND_SPEED: None,
+    CONF_WIND_GUST: None,
+    CONF_WIND_LIMIT: 50,
+    CONF_SLAT_TILT: 50,
+    # Stunden, nach denen ein leeres Haus als Urlaub gilt; 0 heißt nur per Schalter
+    CONF_VACATION_AFTER: 0,
+    CONF_NOTIFY_RAIN: False,
+    CONF_ANNOUNCE_RAIN: False,
 }
 
 WINDOW_MEANS_OPTIONS = ["tilted", "open"]

@@ -10,6 +10,7 @@ Positionen wie in Home Assistant: 0 = zu, 100 = offen.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 
@@ -28,13 +29,16 @@ class Window(IntEnum):
 
 class Reason(str, Enum):
     SCHEDULE = "schedule"
+    VACATION = "vacation"
     EVENING_COOLING = "evening_cooling"
     HEAT = "heat_protection"
     SLEEP = "sleep"
     SITUATION = "situation"
     WINDOW_TILTED = "window_tilted"
     WINDOW_OPEN = "window_open"
+    RAIN = "rain_protection"
     MANUAL = "manual"
+    WIND = "wind_protection"
     FROST = "frost"
     SAFETY = "safety"
 
@@ -42,6 +46,9 @@ class Reason(str, Enum):
 LEVEL = {
     Reason.SAFETY: 1,
     Reason.FROST: 1,
+    Reason.WIND: 1,
+    Reason.RAIN: 3,
+    Reason.VACATION: 7,
     Reason.MANUAL: 2,
     Reason.WINDOW_TILTED: 3,
     Reason.WINDOW_OPEN: 3,
@@ -61,6 +68,7 @@ class Positions:
     tilted: int = 25
     open: int = 100
     shade: int = 70
+    rain: int = 10
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,8 @@ class RoomState:
     manual: int | None = None  # Handbetrieb
     safety: int | None = None  # Sicherheit: Alarm, Rauch, Stromausfall
     frost: bool = False  # Frostschutz: nicht fahren, damit nichts festfriert
+    rain: bool = False  # Regen weht ins offene Fenster
+    wind: bool = False  # Sturm: Jalousien hoch, sonst nehmen sie Schaden
 
 
 @dataclass(frozen=True)
@@ -156,8 +166,15 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
         if pos < floor:
             pos, reason = floor, Reason.WINDOW_OPEN
 
+    # Regen weht hinein: nur der Regenspalt, auch wenn der Raum sonst offen wäre
+    if room.rain and room.window is not Window.CLOSED:
+        pos, reason = p.rain, Reason.RAIN
+
     if room.manual is not None:
         pos, reason = room.manual, Reason.MANUAL
+
+    if room.wind:
+        pos, reason = 100, Reason.WIND
 
     # schützt das Gerät, deshalb über dem Handbetrieb, aber unter der Sicherheit der Menschen
     if room.frost:
@@ -195,6 +212,70 @@ def warm_step(
 
 
 FROST_RAIN_WITHIN = 12 * 3600
+RAIN_LEVELS = {"light": 0.01, "moderate": 2.5, "heavy": 10}  # mm pro Stunde, Stufen des Wetterdienstes
+RAIN_DRY_AFTER = 900
+WIND_CALM = 5  # km/h, darunter fällt Regen senkrecht
+WIND_CALM_AFTER = 600
+
+
+def rain_at_least(state: str | None, level: str) -> bool:
+    """Regnet es mindestens so stark? Ein Regenschalter zählt für jede Stufe."""
+    return state == "on" or at_least(state, RAIN_LEVELS[level])
+
+
+def wet(last_rain: float | None, now: float) -> bool:
+    """Regen zählt sofort, trocken erst 15 Minuten nach dem letzten Tropfen."""
+    return last_rain is not None and now - last_rain < RAIN_DRY_AFTER
+
+
+def rain_in(facing: float | None, wind_from: str | None, speed: str | None) -> bool:
+    """Weht der Regen ins Fenster? Wind aus der Richtung, in die das Fenster zeigt, bis 45° daneben.
+
+    Ohne Richtung oder Windmessung im Zweifel ja, bei Windstille fällt er senkrecht.
+    """
+    try:
+        if float(speed) < WIND_CALM:
+            return False
+        diff = abs((float(wind_from) - facing + 180) % 360 - 180)
+    except (TypeError, ValueError):
+        return True
+    return diff <= 45
+
+
+def wind_step(last_strong: float | None, gust: str | None, limit: float, now: float) -> tuple[bool, float | None]:
+    """Sturm ab der Grenze, vorbei erst nach 10 Minuten darunter. Gibt (Sturm, letzte starke Böe) zurück."""
+    if at_least(gust, limit):
+        last_strong = now
+    return last_strong is not None and now - last_strong < WIND_CALM_AFTER, last_strong
+
+
+def blind_tilt(reason: Reason, phase: Phase, sun_tilt: int) -> int | None:
+    """Lamellen der Jalousie: bei Hitzeschutz schräg gegen direkte Sonne, tagsüber offen, sonst zu.
+
+    Bei Hand, Wind, Frost und Sicherheit bleiben sie, wie sie sind.
+    """
+    if reason is Reason.HEAT:
+        return sun_tilt
+    if reason in (Reason.MANUAL, Reason.WIND, Reason.FROST, Reason.SAFETY):
+        return None
+    return 100 if phase is Phase.DAY else 0
+
+
+def vacation_offset(seed: str) -> tuple[int, int]:
+    """Urlaub: je Raum und Tag ein fester Versatz, bis 20 Minuten später und bis 10 % anders."""
+    h = int(hashlib.sha256(seed.encode()).hexdigest(), 16)
+    return h % 1201, (h // 1201) % 21 - 10
+
+
+def lagged_phase(room_phase: Phase | None, house_phase: Phase, changed_at: float, now: float, offset: float) -> Phase:
+    """Der Raum folgt einem Wechsel der Tagesphase erst nach seinem Versatz."""
+    if room_phase is None or room_phase is house_phase or now - changed_at >= offset:
+        return house_phase
+    return room_phase
+
+
+def vacation_position(position: int, delta: int) -> int:
+    return max(0, min(100, position + delta))
 
 
 def raining(state: str | None) -> bool:

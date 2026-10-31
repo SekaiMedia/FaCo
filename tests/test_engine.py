@@ -24,6 +24,14 @@ from facade_engine import (  # noqa: E402
     House,
     Hysteresis,
     LuxFilter,
+    blind_tilt,
+    lagged_phase,
+    rain_at_least,
+    rain_in,
+    vacation_offset,
+    vacation_position,
+    wet,
+    wind_step,
     frost_step,
     raining,
     safety_trigger,
@@ -245,6 +253,60 @@ class Werkzeuge(unittest.TestCase):
         triggers = [{"entity": "binary_sensor.rauch", "states": ["on"], "home": 100, "away": None}]
         self.assertEqual(safety_trigger(triggers, {"binary_sensor.rauch": "on"}, True), ("binary_sensor.rauch", 100))
         self.assertIsNone(safety_trigger(triggers, {"binary_sensor.rauch": "on"}, False))
+
+    def test_regen_weht_hinein(self):
+        self.assertTrue(rain_in(180, "190", "20"))  # Büro Süd, Wind aus 190°
+        self.assertFalse(rain_in(180, "10", "20"))  # Wind von der anderen Seite
+        self.assertTrue(rain_in(0, "350", "20"))  # über Norden hinweg
+        self.assertFalse(rain_in(180, "180", "2"))  # windstill: Regen fällt senkrecht
+        self.assertTrue(rain_in(180, None, None))  # ohne Messung im Zweifel schützen
+
+    def test_regenstufen_und_trocken(self):
+        self.assertTrue(rain_at_least("0.4", "light"))
+        self.assertFalse(rain_at_least("0.4", "moderate"))
+        self.assertTrue(rain_at_least("2.5", "moderate"))
+        self.assertFalse(rain_at_least("9", "heavy"))
+        self.assertTrue(rain_at_least("on", "heavy"))
+        self.assertTrue(wet(0, 899))
+        self.assertFalse(wet(0, 900))
+        self.assertFalse(wet(None, 0))
+
+    def test_regenspalt(self):
+        state = RoomState(window=Window.TILTED, rain=True)
+        self.assertEqual(decide(RoomConfig(), state, House(Phase.DAY, 12), current=100), Decision(10, R.RAIN))
+        closed = RoomState(rain=True)  # Fenster zu: Regen egal
+        self.assertEqual(decide(RoomConfig(), closed, House(Phase.DAY, 12), current=100), Decision(100, R.SCHEDULE))
+        hand = RoomState(window=Window.OPEN, rain=True, manual=80)
+        self.assertEqual(decide(RoomConfig(), hand, House(Phase.DAY, 12), current=80).reason, R.MANUAL)
+
+    def test_sturm(self):
+        storm, last = wind_step(None, "55", 50, 0)
+        self.assertTrue(storm)
+        storm, last = wind_step(last, "20", 50, 599)
+        self.assertTrue(storm)  # erst nach 10 ruhigen Minuten vorbei
+        storm, last = wind_step(last, "20", 50, 600)
+        self.assertFalse(storm)
+        self.assertEqual(decide(RoomConfig(), RoomState(wind=True, manual=0), House(Phase.NIGHT, 23.5), current=0),
+                         Decision(100, R.WIND))
+
+    def test_lamellen(self):
+        self.assertEqual(blind_tilt(R.HEAT, Phase.DAY, 45), 45)
+        self.assertEqual(blind_tilt(R.SCHEDULE, Phase.DAY, 45), 100)
+        self.assertEqual(blind_tilt(R.VACATION, Phase.NIGHT, 45), 0)
+        self.assertIsNone(blind_tilt(R.MANUAL, Phase.DAY, 45))
+
+    def test_urlaub_versetzt(self):
+        a, b = vacation_offset("kueche2026-11-01"), vacation_offset("buero2026-11-01")
+        self.assertEqual(a, vacation_offset("kueche2026-11-01"))  # am selben Tag gleich
+        self.assertNotEqual(a, b)
+        offsets = [vacation_offset(f"raum{i}") for i in range(200)]
+        self.assertTrue(all(0 <= s <= 1200 and -10 <= d <= 10 for s, d in offsets))
+        self.assertGreater(len({d for _, d in offsets}), 15)  # wirklich gestreut
+        self.assertEqual(lagged_phase(Phase.NIGHT, Phase.DAY, changed_at=0, now=599, offset=600), Phase.NIGHT)
+        self.assertEqual(lagged_phase(Phase.NIGHT, Phase.DAY, changed_at=0, now=600, offset=600), Phase.DAY)
+        self.assertEqual(lagged_phase(None, Phase.DAY, changed_at=0, now=0, offset=600), Phase.DAY)
+        self.assertEqual(vacation_position(95, 10), 100)
+        self.assertEqual(vacation_position(5, -10), 0)
 
     def test_himmelsrichtung(self):
         self.assertEqual(direction_range("e"), (45, 135))

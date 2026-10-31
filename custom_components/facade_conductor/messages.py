@@ -18,9 +18,11 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     CONF_ANNOUNCE_MANUAL,
+    CONF_ANNOUNCE_RAIN,
     CONF_ANNOUNCE_SAFETY,
     CONF_ANNOUNCE_UNREACHABLE,
     CONF_NOTIFY_MANUAL,
+    CONF_NOTIFY_RAIN,
     CONF_NOTIFY_SAFETY,
     CONF_NOTIFY_UNREACHABLE,
     CONF_SPEAKER,
@@ -42,12 +44,14 @@ TEXTS = {
         "manual": "{room}: Handbetrieb bis zur nächsten Tagesphase.",
         "resume": "Automatik fortsetzen",
         "safety": "Sicherheit: {trigger}. Die Rollläden fahren auf {position} Prozent.",
+        "rain_door": "{room}: Regen auf die offene Tür.",
     },
     "en": {
         "unreachable": "{room}: {cover} has been unreachable for 15 minutes.",
         "manual": "{room}: manual mode until the next phase of the day.",
         "resume": "Resume automatic",
         "safety": "Safety: {trigger}. The shutters move to {position} percent.",
+        "rain_door": "{room}: rain on the open door.",
     },
 }
 
@@ -68,6 +72,8 @@ class Messages:
         self.say_manual = bool(house[CONF_ANNOUNCE_MANUAL])
         self.safety = bool(house[CONF_NOTIFY_SAFETY])
         self.say_safety = bool(house[CONF_ANNOUNCE_SAFETY])
+        self.rain = bool(house[CONF_NOTIFY_RAIN])
+        self.say_rain = bool(house[CONF_ANNOUNCE_RAIN])
         self.speaker = house.get(CONF_SPEAKER)
         self._quiet = quiet
         self._said: dict[str, float] = {}
@@ -162,3 +168,11 @@ class Messages:
             await self._send(text, {"tag": "faco_safety", "priority": "high", "ttl": 0})
         if self.say_safety:
             await self._say(self.speaker, text, f"safety_{trigger}", urgent=True)
+
+    async def async_rain_door(self, room: Room) -> None:
+        """Türen fahren bei Regen nicht unter die Durchgangshöhe, stattdessen kommt diese Meldung."""
+        text = self._text("rain_door", room=room.name)
+        if self.rain:
+            await self._send(text, {"tag": f"faco_rain_{room.subentry_id}"})
+        if self.say_rain:
+            await self._say(room.speaker or self.speaker, text, f"rain_{room.subentry_id}")

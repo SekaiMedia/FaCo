@@ -7,11 +7,11 @@ const STRINGS = await fetch(new URL(`./strings.json${new URL(import.meta.url).se
   .catch(() => ({}));
 
 const TABS = ["overview", "rooms", "settings"];
-const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "voice", "heat", "daylight", "weather", "behavior", "about"];
+const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "voice", "heat", "daylight", "weather", "vacation", "behavior", "about"];
 const GROUPS = ["house", "floor", "room"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
-const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade"];
+const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade", "rain"];
 const WINDOW_CLASSES = ["window", "door", "opening", "garage_door"];
 const REASON_COLOR = {
   schedule: "var(--info-color, #039be5)",
@@ -23,6 +23,9 @@ const REASON_COLOR = {
   manual: "var(--primary-text-color)",
   safety: "var(--error-color, #db4437)",
   frost: "var(--info-color, #039be5)",
+  rain_protection: "var(--info-color, #039be5)",
+  wind_protection: "var(--warning-color, #ffa600)",
+  vacation: "var(--info-color, #039be5)",
 };
 
 const pct = (v) => (v == null ? "–" : `${v} %`);
@@ -252,7 +255,7 @@ class FacadeConductorPanel extends HTMLElement {
         <div class="s-body">${body}</div>
       </details>`;
     }).join("");
-    return `${sections}<p class="muted">${esc(this._t("rain_wind_later"))}</p>`;
+    return sections;
   }
 
   _sec_schedule(info) {
@@ -356,7 +359,7 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_messages(info) {
     const h = info.house;
-    const events = ["unreachable", "manual", "safety"];
+    const events = ["unreachable", "manual", "safety", "rain"];
     const on = events.filter((e) => h[`notify_${e}`] || h[`announce_${e}`]).map((e) => this._t(`msg_${e}`));
     const speakers = Object.keys(this._hass.states).filter((id) => id.startsWith("notify."));
     return [
@@ -445,23 +448,57 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_weather(info) {
     const h = info.house;
-    const temps = Object.keys(this._hass.states).filter(
-      (id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature",
-    );
+    const sensors = (cls) =>
+      Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && cls.includes(this._hass.states[id].attributes.device_class));
     const rain = Object.keys(this._hass.states).filter(
       (id) =>
         (id.startsWith("sensor.") && ["precipitation_intensity", "precipitation"].includes(this._hass.states[id].attributes.device_class)) ||
         (id.startsWith("binary_sensor.") && this._hass.states[id].attributes.device_class === "moisture") ||
         /rain|regen/.test(id),
     );
-    const on = h.outdoor_temp && h.rain_sensor;
+    const directions = Object.keys(this._hass.states).filter((id) => id.startsWith("sensor.") && /wind.*(dir|richtung)|bearing/.test(id));
+    const on = [
+      h.outdoor_temp && h.rain_sensor && this._t("frost_short"),
+      h.rain_sensor && this._t("rain_short"),
+      h.wind_gust && this._t("wind_short"),
+    ].filter(Boolean);
+    const now = [info.frost && this._t("frost_now"), info.wind && this._t("wind_now")].filter(Boolean);
     return [
-      info.frost ? this._t("frost_now") : on ? this._t("frost_on") : this._t("off"),
+      now.length ? now.join(" · ") : on.length ? on.join(" · ") : this._t("off"),
       `<label class="field">${esc(this._t("outdoor_temp"))}
-         ${this._combo("h-outdoor_temp", "house", "outdoor_temp", temps, h.outdoor_temp)}</label>
+         ${this._combo("h-outdoor_temp", "house", "outdoor_temp", sensors(["temperature"]), h.outdoor_temp)}</label>
        <label class="field">${esc(this._t("rain_sensor"))}
          ${this._combo("h-rain_sensor", "house", "rain_sensor", rain, h.rain_sensor)}</label>
-       <p class="muted">${esc(this._t("frost_hint"))}</p>`,
+       <p class="muted">${esc(this._t("frost_hint"))}</p>
+       <h3>${esc(this._t("rain_protection"))}</h3>
+       <label class="field">${esc(this._t("rain_level"))}
+         <select data-house="rain_level">${["light", "moderate", "heavy"]
+           .map((x) => `<option value="${x}" ${h.rain_level === x ? "selected" : ""}>${esc(this._t(`rain_${x}`))}</option>`)
+           .join("")}</select></label>
+       <label class="field">${esc(this._t("wind_direction"))}
+         ${this._combo("h-wind_direction", "house", "wind_direction", directions, h.wind_direction)}</label>
+       <label class="field">${esc(this._t("wind_speed"))}
+         ${this._combo("h-wind_speed", "house", "wind_speed", sensors(["wind_speed"]), h.wind_speed)}</label>
+       <p class="sentence">${this._sentence("rain_gap", { pos: this._housePos("rain") })}</p>
+       <p class="muted">${esc(this._t("rain_hint"))}</p>
+       <h3>${esc(this._t("blinds"))}</h3>
+       <label class="field">${esc(this._t("wind_gust"))}
+         ${this._combo("h-wind_gust", "house", "wind_gust", sensors(["wind_speed"]), h.wind_gust)}</label>
+       <div class="positions">
+         <label class="field">${esc(this._t("wind_limit"))} ${this._houseInput("wind_limit", 'type="number" min="10" max="150" step="1"')}</label>
+         <label class="field">${esc(this._t("slat_tilt"))} ${this._houseInput("slat_tilt", 'type="number" min="0" max="100" step="1"')}</label>
+       </div>
+       <p class="muted">${esc(this._t("blinds_hint"))}</p>`,
+    ];
+  }
+
+  _sec_vacation(info) {
+    const after = Number(info.house.vacation_after) || 0;
+    return [
+      info.vacation ? this._t("vacation_now") : after ? this._t("vacation_auto", { h: after }) : this._t("off"),
+      `${info.vacation_entity ? `<label class="switch"><input type="checkbox" data-vacation ${this._hass.states[info.vacation_entity]?.state === "on" ? "checked" : ""}> ${esc(this._t("vacation_switch"))}</label>` : ""}
+       <label class="field">${esc(this._t("vacation_after"))} ${this._houseInput("vacation_after", 'type="number" min="0" max="240" step="1"')}</label>
+       <p class="muted">${esc(this._t("vacation_hint"))}</p>`,
     ];
   }
 
@@ -760,7 +797,11 @@ class FacadeConductorPanel extends HTMLElement {
             .map(
               (id) =>
                 `<label data-cover-label="${esc(this._searchText(id))}"><input type="checkbox" data-cover value="${esc(id)}" ${chosen.has(id) ? "checked" : ""}> ${esc(this._name(id))}${
-                  this._hass.states[id].attributes.device_class === "curtain" ? ` <span class="muted">· ${esc(this._t("curtain"))}</span>` : ""
+                  this._hass.states[id].attributes.device_class === "curtain"
+                    ? ` <span class="muted">· ${esc(this._t("curtain"))}</span>`
+                    : this._hass.states[id].attributes.device_class === "blind" || (this._hass.states[id].attributes.supported_features & 128)
+                      ? ` <span class="muted">· ${esc(this._t("blind"))}</span>`
+                      : ""
                 }</label>`,
             )
             .join("")}
@@ -1070,6 +1111,11 @@ class FacadeConductorPanel extends HTMLElement {
       const deg = Math.round(this._compass.deg);
       this._compassStop();
       save({ direction_deg: deg });
+    });
+    root.querySelector("[data-vacation]")?.addEventListener("change", async (e) => {
+      await this._hass.callService("switch", e.target.checked ? "turn_on" : "turn_off", { entity_id: this._info.vacation_entity });
+      this._flash(this._t("saved"));
+      setTimeout(() => this._load(), 1000);
     });
     root.getElementById("f-cooling-outside")?.addEventListener("change", (e) => save({ cooling_outside: e.target.checked }));
     root.querySelectorAll("[data-cover-dir]").forEach((el) =>

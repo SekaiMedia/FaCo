@@ -78,7 +78,8 @@
           "night": "Nacht",
           "tilted": "Fenster gekippt",
           "open": "Fenster ganz offen",
-          "shade": "Hitzeschutz"
+          "shade": "Hitzeschutz",
+          "rain": "Regenspalt"
         }
       }
     }
@@ -170,7 +171,8 @@
             "night": "Nacht",
             "tilted": "Fenster gekippt",
             "open": "Fenster ganz offen",
-            "shade": "Hitzeschutz"
+            "shade": "Hitzeschutz",
+            "rain": "Regenspalt"
           }
         }
       },
@@ -243,7 +245,10 @@
           "window_open": "Fenster offen",
           "manual": "Handbetrieb",
           "safety": "Sicherheit",
-          "frost": "Frostschutz"
+          "frost": "Frostschutz",
+          "rain_protection": "Regenschutz",
+          "wind_protection": "Windschutz",
+          "vacation": "Urlaub"
         }
       },
       "target_position": {
@@ -261,6 +266,9 @@
     "switch": {
       "manual": {
         "name": "Handbetrieb"
+      },
+      "vacation": {
+        "name": "Urlaub"
       }
     }
   },

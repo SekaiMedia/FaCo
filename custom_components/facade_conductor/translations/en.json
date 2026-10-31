@@ -78,7 +78,8 @@
           "night": "Night",
           "tilted": "Window tilted",
           "open": "Window fully open",
-          "shade": "Heat protection"
+          "shade": "Heat protection",
+          "rain": "Rain gap"
         }
       }
     }
@@ -170,7 +171,8 @@
             "night": "Night",
             "tilted": "Window tilted",
             "open": "Window fully open",
-            "shade": "Heat protection"
+            "shade": "Heat protection",
+            "rain": "Rain gap"
           }
         }
       },
@@ -243,7 +245,10 @@
           "window_open": "Window open",
           "manual": "Manual",
           "safety": "Safety",
-          "frost": "Frost protection"
+          "frost": "Frost protection",
+          "rain_protection": "Rain protection",
+          "wind_protection": "Wind protection",
+          "vacation": "Vacation"
         }
       },
       "target_position": {
@@ -261,6 +266,9 @@
     "switch": {
       "manual": {
         "name": "Manual"
+      },
+      "vacation": {
+        "name": "Vacation"
       }
     }
   },
