@@ -35,6 +35,7 @@ from .const import (
     CONF_NIGHT_START,
     CONF_POSITIONS,
     CONF_REST_MINUTES,
+    CONF_SITUATIONS,
     CONF_SLEEP_PAUSE_END,
     CONF_SLEEP_PAUSE_START,
     CONF_SLEEP_SENSOR,
@@ -64,6 +65,13 @@ ROOM_CHANGES = vol.Schema(
         vol.Optional(CONF_SLEEP_WATTS): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=3000))),
         vol.Optional(CONF_SLEEP_WAKE_MINUTES): vol.Any(None, vol.All(vol.Coerce(int), vol.Range(min=0, max=120))),
         vol.Optional(CONF_DIRECTION): vol.In(DIRECTION_OPTIONS),
+        vol.Optional(CONF_SITUATIONS): [
+            {
+                vol.Required("entity"): cv.entity_id,
+                vol.Required("states"): vol.All(cv.ensure_list, [cv.string], vol.Length(min=1)),
+                vol.Optional("position"): vol.Any(None, PERCENT),
+            }
+        ],
         vol.Optional(CONF_POSITIONS): {vol.In(POSITION_KEYS): vol.Any(None, PERCENT)},
         vol.Optional(CONF_ADVANCED): {
             vol.In([CONF_SLEEP_PAUSE_START, CONF_SLEEP_PAUSE_END]): vol.Any(None, TIME_TEXT)
@@ -137,6 +145,7 @@ def ws_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
                 "position": round(sum(current.values()) / len(current)) if current else None,
                 "target": decision.position if decision else None,
                 "reason": decision.reason.value if decision else None,
+                "situation": room.situation if room else None,
                 "reason_entity": ent_reg.async_get_entity_id("sensor", DOMAIN, f"{sub.subentry_id}_reason"),
                 "manual_entity": ent_reg.async_get_entity_id("switch", DOMAIN, f"{sub.subentry_id}_manual"),
             }

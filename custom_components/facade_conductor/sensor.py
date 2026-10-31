@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant
@@ -37,10 +39,13 @@ class ReasonSensor(RoomEntity, SensorEntity):
         return self._room.decision.reason.value if self._room.decision else None
 
     @property
-    def extra_state_attributes(self) -> dict[str, int] | None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
         if not self._room.decision:
             return None
-        return {"level": self._room.decision.level}
+        attrs: dict[str, Any] = {"level": self._room.decision.level}
+        if self._room.decision.reason is Reason.SITUATION:
+            attrs["situation"] = self._room.situation
+        return attrs
 
 
 class TargetSensor(RoomEntity, SensorEntity):

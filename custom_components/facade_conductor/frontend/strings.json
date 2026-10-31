@@ -125,7 +125,19 @@
     "leave_persons": "Haushalt",
     "no_phone": "kein Handy mit der Home-Assistant-App gefunden",
     "send_test": "Testmeldung",
-    "test_sent": "Testmeldung gesendet"
+    "test_sent": "Testmeldung gesendet",
+    "situations": "Situationen",
+    "situations_hint": "Solange eine Entität einen dieser Zustände hat, hält der Raum seine Position oder fährt auf eine feste. Nachts gilt trotzdem die Nachtschließung, Hitzeschutz und Schlafen dunkeln weiter ab. Die erste aktive Situation gewinnt.",
+    "situation_row": "Wenn {name} {states} ist → {pos}",
+    "situation": "Situation",
+    "situation_entity": "Wenn",
+    "situation_states": "Zustände, mit Komma getrennt",
+    "situation_position": "Position",
+    "situation_incomplete": "Bitte Entität und mindestens einen Zustand angeben.",
+    "hold": "halten",
+    "add_situation": "Situation hinzufügen",
+    "no_situations": "Keine Situation angelegt.",
+    "remove": "Entfernen"
   },
   "en": {
     "tab_overview": "Overview",
@@ -253,6 +265,18 @@
     "leave_persons": "Household",
     "no_phone": "no phone with the Home Assistant app found",
     "send_test": "Send test",
-    "test_sent": "Test sent"
+    "test_sent": "Test sent",
+    "situations": "Situations",
+    "situations_hint": "While an entity has one of these states, the room keeps its position or moves to a fixed one. Night closing still applies, heat protection and sleep still darken further. The first active situation wins.",
+    "situation_row": "When {name} is {states} → {pos}",
+    "situation": "Situation",
+    "situation_entity": "When",
+    "situation_states": "States, separated by commas",
+    "situation_position": "Position",
+    "situation_incomplete": "Please choose an entity and at least one state.",
+    "hold": "hold",
+    "add_situation": "Add situation",
+    "no_situations": "No situation yet.",
+    "remove": "Remove"
   }
 }

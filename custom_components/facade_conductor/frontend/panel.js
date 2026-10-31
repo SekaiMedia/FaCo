@@ -49,6 +49,7 @@ class FacadeConductorPanel extends HTMLElement {
     this._open = new Set();
     this._combos = {};
     this._coverFilter = "";
+    this._draft = {};
     this._help = false;
   }
 
@@ -193,6 +194,7 @@ class FacadeConductorPanel extends HTMLElement {
   }
 
   _reasonText(room) {
+    if (room.reason === "situation" && room.situation) return `${this._t("situation")}: ${this._name(room.situation)}`;
     const state = this._hass.states[room.reason_entity];
     if (state && state.state === room.reason) return this._hass.formatEntityState(state);
     return this._hass.localize(`component.facade_conductor.entity.sensor.reason.state.${room.reason}`) || room.reason;
@@ -541,6 +543,31 @@ class FacadeConductorPanel extends HTMLElement {
         <p class="muted">${esc(this._t("window_means_hint"))}</p>
       </div>
       <div class="card">
+        <h3>${esc(this._t("situations"))}</h3>
+        <p class="muted">${esc(this._t("situations_hint"))}</p>
+        ${(d.situations || [])
+          .map(
+            (sit, i) => `<div class="row">
+              <span>${esc(this._t("situation_row", {
+                name: this._name(sit.entity),
+                states: sit.states.join(", "),
+                pos: sit.position == null ? this._t("hold") : `${sit.position} %`,
+              }))}</span>
+              <button class="btn2" data-sit-del="${i}">${esc(this._t("remove"))}</button>
+            </div>`,
+          )
+          .join("") || `<p class="muted">${esc(this._t("no_situations"))}</p>`}
+        <div class="positions">
+          <label class="field">${esc(this._t("situation_entity"))}
+            ${this._combo("s-entity", "draft", "situation", Object.keys(this._hass.states), this._draft.situation)}</label>
+          <label class="field">${esc(this._t("situation_states"))}
+            <input id="s-states" class="filter" value="${esc(this._draft.states || "")}" placeholder="on"></label>
+          <label class="field">${esc(this._t("situation_position"))}
+            <input id="s-pos" type="number" min="0" max="100" step="1" value="${esc(this._draft.position ?? "")}" placeholder="${esc(this._t("hold"))}"></label>
+        </div>
+        <div><button class="btn" data-action="sit-add">${esc(this._t("add_situation"))}</button></div>
+      </div>
+      <div class="card">
         <h3>${esc(this._t("sun"))}</h3>
         <label class="field">${esc(this._t("direction"))}
           <select id="f-direction" data-field="direction">
@@ -678,6 +705,13 @@ class FacadeConductorPanel extends HTMLElement {
     root.querySelectorAll(".combo").forEach((combo) =>
       this._bindCombo(combo, (value) => {
         const { kind, key } = this._combos[combo.dataset.combo];
+        if (kind === "draft") {
+          // Vorschlag für die Zustände: ein Fernseher ist auch bei Pause „an“
+          this._draft = { ...this._draft, [key]: value, states: (value || "").startsWith("media_player.") ? "on, playing, paused" : "on" };
+          const states = root.getElementById("s-states");
+          if (states) states.value = this._draft.states;
+          return;
+        }
         (kind === "house" ? saveHouse : save)({ [key]: value });
       }),
     );
@@ -686,6 +720,23 @@ class FacadeConductorPanel extends HTMLElement {
       this._filterCovers();
     });
     this._filterCovers();
+    root.getElementById("s-states")?.addEventListener("input", (e) => (this._draft.states = e.target.value));
+    root.getElementById("s-pos")?.addEventListener("input", (e) => (this._draft.position = e.target.value));
+    root.querySelector("[data-action=sit-add]")?.addEventListener("click", () => {
+      const states = (this._draft.states || "").split(",").map((x) => x.trim()).filter(Boolean);
+      if (!this._draft.situation || !states.length) return this._flash(this._t("situation_incomplete"));
+      const room = this._info.rooms.find((r) => r.id === this._room);
+      const position = this._draft.position === undefined || this._draft.position === "" ? null : Number(this._draft.position);
+      const entity = this._draft.situation;
+      this._draft = {};
+      save({ situations: [...(room.data.situations || []), { entity, states, position }] });
+    });
+    root.querySelectorAll("[data-sit-del]").forEach((el) =>
+      el.addEventListener("click", () => {
+        const room = this._info.rooms.find((r) => r.id === this._room);
+        save({ situations: (room.data.situations || []).filter((_, i) => i !== Number(el.dataset.sitDel)) });
+      }),
+    );
     root.querySelectorAll("[data-cover]").forEach((el) =>
       el.addEventListener("change", () =>
         save({ covers: [...root.querySelectorAll("[data-cover]:checked")].map((c) => c.value) }),

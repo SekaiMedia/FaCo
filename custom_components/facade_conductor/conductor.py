@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 
@@ -36,6 +36,7 @@ from .const import (
     CONF_SLEEP_PAUSE_START,
     CONF_SLEEP_SENSOR,
     CONF_SLEEP_WAKE_MINUTES,
+    CONF_SITUATIONS,
     CONF_SLEEP_WATTS,
     CONF_WEATHER,
     CONF_WINDOW_MEANS,
@@ -65,6 +66,7 @@ from .engine import (
     direction_range,
     may_move,
     phase_for,
+    situation_hold,
     sleep_on,
     still_asleep,
 )
@@ -93,6 +95,9 @@ class Room:
     wake_delay: float = 0
     sleep_watts: float | None = None  # gesetzt, wenn der Schlaf-Geber ein Leistungssensor ist
     last_asleep: float | None = None
+    situations: list[dict[str, Any]] = field(default_factory=list)
+    situation: str | None = None  # aktive Situation
+    held: int | None = None  # Position beim Beginn der Situation
     decision: Decision | None = None
     state: RoomState | None = None
     manual: int | None = None
@@ -141,6 +146,7 @@ class Conductor:
             window_sensor=data.get(CONF_WINDOW_SENSOR),
             window_means=Window.OPEN if data.get(CONF_WINDOW_MEANS) == "open" else Window.TILTED,
             sleep_sensor=data.get(CONF_SLEEP_SENSOR),
+            situations=list(data.get(CONF_SITUATIONS) or []),
             wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
             sleep_watts=float(data.get(CONF_SLEEP_WATTS) or DEFAULT_SLEEP_WATTS)
             if (data.get(CONF_SLEEP_SENSOR) or "").startswith("sensor.")
@@ -156,6 +162,7 @@ class Conductor:
         for room in self.rooms:
             watched += room.covers
             watched += [e for e in (room.window_sensor, room.sleep_sensor) if e]
+            watched += [s["entity"] for s in room.situations]
         self._unsubs.append(async_track_state_change_event(self.hass, watched, self._on_state))
         self._unsubs.append(
             async_track_time_interval(self.hass, self._on_tick, timedelta(seconds=EVALUATE_INTERVAL_SECONDS))
@@ -300,6 +307,9 @@ class Conductor:
                 room.decision = None
                 continue
             here = round(sum(positions.values()) / len(positions))
+            states = {s["entity"]: (st.state if (st := self.hass.states.get(s["entity"])) else None) for s in room.situations}
+            room.situation, room.held, hold = situation_hold(room.situations, states, here, room.situation, room.held)
+            room.state = replace(room.state, hold=hold)
             room.decision = decide(room.cfg, room.state, house, here)
             current.update(positions)
             if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):

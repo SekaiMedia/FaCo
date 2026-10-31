@@ -142,7 +142,8 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
         if pos > cap:
             pos, reason = cap, Reason.SLEEP
 
-    if room.hold is not None:
+    # Situation hält oder fährt, aber nachts gilt die Nachtschließung, und Hitze oder Schlafen dunkeln weiter ab
+    if room.hold is not None and not night and (room.hold < pos or reason not in (Reason.HEAT, Reason.SLEEP)):
         pos, reason = room.hold, Reason.SITUATION
 
     if room.window is Window.TILTED and pos < p.tilted:
@@ -169,6 +170,22 @@ def sleep_on(state: str | None, watts: float | None) -> bool:
         return float(state) >= watts
     except (TypeError, ValueError):
         return False  # nicht verfügbar zählt als wach
+
+
+def situation_hold(
+    situations: list[dict], states: dict[str, str | None], current: int, active_before: str | None, held_before: int | None
+) -> tuple[str | None, int | None, int | None]:
+    """Erste aktive Situation eines Raums: (Entität, gemerkte Position, Halteposition).
+
+    Ohne feste Position hält die Situation die Stellung, die der Raum bei ihrem Beginn hatte.
+    """
+    active = next((s for s in situations if states.get(s["entity"]) in s["states"]), None)
+    if active is None:
+        return None, None, None
+    entity = active["entity"]
+    held = held_before if entity == active_before else current
+    position = active.get("position")
+    return entity, held, held if position is None else position
 
 
 def still_asleep(on: bool, off_for: float | None, delay: float) -> bool:

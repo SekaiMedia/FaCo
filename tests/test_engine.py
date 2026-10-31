@@ -39,6 +39,7 @@ from facade_engine import (  # noqa: E402
     leave_step,
     may_move,
     situation_active,
+    situation_hold,
     sleep_on,
     still_asleep,
 )
@@ -109,6 +110,14 @@ class Rangfolge(unittest.TestCase):
         self.assertD(d(WOHN, MITTAG, 100, hold=70), 70, R.SITUATION)
         self.assertFalse(situation_active(23.5, 7, 23))
         self.assertD(d(WOHN, NACHT, 70), 0, R.SCHEDULE)
+
+    def test_situation_fernseher_und_kino(self):
+        self.assertD(d(WOHN, DAEMMERUNG, 100, hold=100), 100, R.SITUATION)  # Fernseher hält abends offen
+        self.assertD(d(WOHN, NACHT, 25, hold=25), 0, R.SCHEDULE)  # Nachtschließung gilt trotzdem
+        self.assertD(d(WOHN, MORGEN, 100, hold=100), 70, R.HEAT)  # Hitzeschutz dunkelt weiter ab
+        self.assertD(d(WOHN, MORGEN, 100, hold=0), 0, R.SITUATION)  # Kinomodus ist dunkler als Hitzeschutz
+        self.assertD(d(SCHLAF, MITTAG, 25, hold=100, asleep=True), 25, R.SLEEP)  # Schlafen bleibt dunkel
+        self.assertD(d(KUECHE, DAEMMERUNG, 100, hold=60, window=Window.TILTED), 60, R.SITUATION)
 
     def test_j_hand_schlaegt_lueften(self):
         self.assertD(d(BUERO, NACHT, 25, window=Window.TILTED, manual=50), 50, R.MANUAL)
@@ -213,6 +222,23 @@ class Werkzeuge(unittest.TestCase):
         self.assertEqual(leave_step(W, 0, 30, True, True, False), (D, None))  # doch zu Hause
         self.assertEqual(leave_step(LEAVE_WARNED, 0, 200, False, False, False), (D, None))  # zugemacht
         self.assertEqual(leave_step(D, 0, 999, False, True, True), (D, None))  # „Ist gewollt“ bleibt erledigt
+
+    def test_situation_waehlen(self):
+        tv = {"entity": "media_player.tv", "states": ["on", "playing"], "position": None}
+        kino = {"entity": "input_boolean.kino", "states": ["on"], "position": 0}
+        both = [kino, tv]
+        self.assertEqual(situation_hold(both, {"media_player.tv": "off"}, 100, None, None), (None, None, None))
+        # Fernseher geht an: die jetzige Position wird gemerkt und gehalten
+        self.assertEqual(situation_hold(both, {"media_player.tv": "playing"}, 25, None, None), ("media_player.tv", 25, 25))
+        # später hat der Raum sich bewegt, gehalten wird weiter die gemerkte
+        self.assertEqual(
+            situation_hold(both, {"media_player.tv": "on"}, 70, "media_player.tv", 25), ("media_player.tv", 25, 25)
+        )
+        # Kinomodus steht vorne und hat eine feste Position
+        self.assertEqual(
+            situation_hold(both, {"media_player.tv": "on", "input_boolean.kino": "on"}, 25, "media_player.tv", 25),
+            ("input_boolean.kino", 25, 0),
+        )
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))

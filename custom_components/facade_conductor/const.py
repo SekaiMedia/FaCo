@@ -29,6 +29,7 @@ CONF_SLEEP_WAKE_MINUTES = "sleep_wake_minutes"
 CONF_SLEEP_WATTS = "sleep_watts"
 DEFAULT_SLEEP_WATTS = 5
 CONF_DIRECTION = "direction"
+CONF_SITUATIONS = "situations"
 CONF_ADVANCED = "advanced"
 
 POSITION_KEYS = ("day", "dusk", "night", "tilted", "open", "shade")
