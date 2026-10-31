@@ -68,6 +68,20 @@ def phones(hass: HomeAssistant, person_id: str) -> list[str]:
     return found
 
 
+def owner(hass: HomeAssistant, entity_id: str) -> str | None:
+    """Person, zu deren Handy eine Entität gehört, etwa der Sensor „Nächster Wecker“."""
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get(entity_id)
+    if entry is None or entry.device_id is None:
+        return None
+    for person in hass.states.async_entity_ids("person"):
+        state = hass.states.get(person)
+        for tracker in state.attributes.get("device_trackers", []) if state else []:
+            if (t := ent_reg.async_get(tracker)) and t.device_id == entry.device_id:
+                return person
+    return None
+
+
 async def async_notify(hass: HomeAssistant, service: str, message: str, data: dict[str, Any]) -> None:
     try:
         await hass.services.async_call(

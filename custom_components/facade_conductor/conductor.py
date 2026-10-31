@@ -24,7 +24,9 @@ from .const import (
     CONF_ADVANCED,
     CONF_AREA,
     CONF_COOLING_ABOVE,
+    CONF_COOLING_OUTSIDE,
     CONF_COOLING_SENSOR,
+    CONF_COVER_DIRECTIONS,
     CONF_COVERS,
     CONF_DIRECTION,
     CONF_DIRECTION_DEG,
@@ -34,7 +36,9 @@ from .const import (
     CONF_LUX_SENSOR,
     CONF_NIGHT_END,
     CONF_NIGHT_START,
+    CONF_OUTDOOR_TEMP,
     CONF_POSITIONS,
+    CONF_RAIN_SENSOR,
     CONF_REST_MINUTES,
     CONF_SAFETY,
     CONF_SLEEP_PAUSE_END,
@@ -43,6 +47,7 @@ from .const import (
     CONF_SLEEP_WAKE_MINUTES,
     CONF_SITUATIONS,
     CONF_SLEEP_WATTS,
+    CONF_SPEAKER,
     CONF_WAKE_LEAD,
     CONF_WAKE_SENSOR,
     CONF_WAKE_WAIT,
@@ -64,27 +69,30 @@ from .engine import (
     CommandLog,
     Decision,
     House,
-    Hysteresis,
+    LuxFilter,
     Phase,
     Positions,
     RoomConfig,
     RoomState,
     Window,
-    at_least,
+    away,
     batch,
     curtain_position,
     decide,
     direction_range,
     may_move,
+    frost_step,
     phase_for,
-    safety_position,
+    raining,
+    safety_trigger,
     situation_hold,
     sleep_on,
     still_asleep,
     wake_phase,
     wake_until,
+    warm_step,
 )
-from .leave import LeaveWatcher
+from .leave import LeaveWatcher, owner
 from .messages import Messages
 
 _LOGGER = logging.getLogger(__name__)
@@ -116,10 +124,14 @@ class Room:
     held: int | None = None  # Position beim Beginn der Situation
     cooling_sensor: str | None = None
     cooling_above: float = DEFAULT_COOLING_ABOVE
+    cooling_outside: bool = False  # nur offen lassen, wenn es draußen kühler ist
+    warm: bool = False
+    cover_azimuth: dict[str, tuple[float, float]] = field(default_factory=dict)  # Eckzimmer
     wake_sensor: str | None = None
     wake_lead: float = 0
     wake_wait: bool = False  # im Dunkeln erst bei Helligkeit öffnen
     woken_until: float | None = None
+    speaker: str | None = None  # Lautsprecher für Durchsagen
     decision: Decision | None = None
     state: RoomState | None = None
     manual: int | None = None
@@ -136,7 +148,11 @@ class Conductor:
         self.phase: Phase | None = None
         self._defaults = {**DEFAULT_POSITIONS, **house.get(CONF_POSITIONS, {})}
         self._night = (_hours(house[CONF_NIGHT_START]), _hours(house[CONF_NIGHT_END]))
-        self._lux = Hysteresis(house[CONF_LUX_DARK], house[CONF_LUX_BRIGHT])
+        self._lux = LuxFilter(house[CONF_LUX_DARK], house[CONF_LUX_BRIGHT])
+        self.frost = False
+        # shortcut: Regen nur seit dem Start gemerkt; nach einem Neustart greift Frostschutz erst beim nächsten Regen
+        self._last_rain: float | None = None
+        self._safety_trigger: str | None = None
         self._hot = False
         self._log = CommandLog()
         self._listeners: list[Callable[[], None]] = []
@@ -144,7 +160,7 @@ class Conductor:
         self._pending: CALLBACK_TYPE | None = None
         self.safety = list(house[CONF_SAFETY])
         self.leave = LeaveWatcher(hass, house, lambda: self.mode != MODE_OFF)
-        self.messages = Messages(hass, house, lambda: self.leave.persons, self._resume)
+        self.messages = Messages(hass, house, lambda: self.leave.persons, self._resume, self._quiet)
         self.rooms = [
             self._room(sub.subentry_id, sub.title, dict(sub.data))
             for sub in entry.subentries.values()
@@ -179,6 +195,9 @@ class Conductor:
             wake_lead=float(data.get(CONF_WAKE_LEAD) or 0) * 60,
             wake_wait=bool(data.get(CONF_WAKE_WAIT)),
             cooling_above=float(data.get(CONF_COOLING_ABOVE) or DEFAULT_COOLING_ABOVE),
+            cooling_outside=bool(data.get(CONF_COOLING_OUTSIDE)),
+            cover_azimuth={c: direction_range(d) for c, d in (data.get(CONF_COVER_DIRECTIONS) or {}).items()},
+            speaker=data.get(CONF_SPEAKER),
             wake_delay=float(data.get(CONF_SLEEP_WAKE_MINUTES) or 0) * 60,
             sleep_watts=float(data.get(CONF_SLEEP_WATTS) or DEFAULT_SLEEP_WATTS)
             if (data.get(CONF_SLEEP_SENSOR) or "").startswith("sensor.")
@@ -190,8 +209,7 @@ class Conductor:
     async def async_start(self) -> None:
         # Personen zählen für „jemand zu Hause“ bei der Sicherheit
         watched = [SUN, *(t["entity"] for t in self.safety), *(self.leave.persons if self.safety else [])]
-        if lux := self.house.get(CONF_LUX_SENSOR):
-            watched.append(lux)
+        watched += [e for e in (self.house.get(k) for k in (CONF_LUX_SENSOR, CONF_OUTDOOR_TEMP, CONF_RAIN_SENSOR)) if e]
         for room in self.rooms:
             watched += room.covers
             watched += [e for e in (room.window_sensor, room.sleep_sensor, room.cooling_sensor, room.wake_sensor) if e]
@@ -312,7 +330,7 @@ class Conductor:
         if lux := self.house.get(CONF_LUX_SENSOR):
             state = self.hass.states.get(lux)
             try:
-                return self._lux.update(float(state.state))
+                return self._lux.update(float(state.state), time.monotonic())
             except (AttributeError, ValueError):
                 pass  # Sensor fehlt: Sonnenstand nehmen
         sun = self.hass.states.get(SUN)
@@ -340,6 +358,11 @@ class Conductor:
         state = self.hass.states.get(entity_id) if entity_id else None
         if state is None:
             return None
+        # der Wecker vom Handy einer Person zählt nur, wenn sie zu Hause ist
+        if (person := owner(self.hass, entity_id)) and away(
+            st.state if (st := self.hass.states.get(person)) else None
+        ):
+            return None
         value = dt_util.parse_datetime(state.state)
         if value is None and (clock := dt_util.parse_time(state.state)):
             value = dt_util.now().replace(hour=clock.hour, minute=clock.minute, second=clock.second, microsecond=0)
@@ -349,13 +372,27 @@ class Conductor:
             value = value.replace(tzinfo=dt_util.get_default_time_zone())
         return value.timestamp()
 
+    def _quiet(self) -> bool:
+        """Keine Durchsagen nachts und solange in einem Raum jemand schläft."""
+        return self.phase is Phase.NIGHT or any(r.state is not None and r.state.asleep for r in self.rooms)
+
     def _curtain(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
         return state is not None and state.attributes.get("device_class") == "curtain"
 
+    def _value(self, entity_id: str | None) -> str | None:
+        state = self.hass.states.get(entity_id) if entity_id else None
+        return state.state if state else None
+
     def _warm(self, room: Room) -> bool:
-        state = self.hass.states.get(room.cooling_sensor) if room.cooling_sensor else None
-        return at_least(state.state if state else None, room.cooling_above)
+        room.warm = warm_step(
+            self._value(room.cooling_sensor),
+            room.cooling_above,
+            room.warm,
+            self._value(self.house.get(CONF_OUTDOOR_TEMP)),
+            room.cooling_outside,
+        )
+        return room.warm
 
     def _current(self, room: Room) -> dict[str, int]:
         return {c: p for c in room.covers if (p := _position(self.hass.states.get(c))) is not None}
@@ -377,8 +414,15 @@ class Conductor:
         house = House(phase, hour, hot=self._hot, sun_azimuth=azimuth)
 
         states = {t["entity"]: (st.state if (st := self.hass.states.get(t["entity"])) else None) for t in self.safety}
-        safety = safety_position(self.safety, states, self.leave.anyone_home())
+        found = safety_trigger(self.safety, states, self.leave.anyone_home())
+        safety = found[1] if found else None
         stamp = time.monotonic()
+        if found and found[0] != self._safety_trigger and self.mode != MODE_OFF:
+            self.hass.async_create_task(self.messages.async_safety(*found))
+        self._safety_trigger = found[0] if found else None
+        if raining(self._value(self.house.get(CONF_RAIN_SENSOR))):
+            self._last_rain = stamp
+        self.frost = frost_step(self.frost, self._value(self.house.get(CONF_OUTDOOR_TEMP)), self._last_rain, stamp)
         targets: dict[str, int] = {}
         current: dict[str, int] = {}
         moving: list[Room] = []
@@ -394,6 +438,7 @@ class Conductor:
                 warm=self._warm(room),
                 manual=room.manual,
                 safety=safety,
+                frost=self.frost,
             )
             positions = self._current(room)
             if not positions:
@@ -411,13 +456,7 @@ class Conductor:
             room.decision = decide(room.cfg, room.state, room_house, here)
             current.update(positions)
             if self.mode == MODE_AUTO and may_move(room.decision, room.last_auto_move, stamp, self._rest()):
-                room_phase = room_house.phase
-                targets.update(
-                    {
-                        c: curtain_position(room.decision, room_phase) if self._curtain(c) else room.decision.position
-                        for c in positions
-                    }
-                )
+                targets.update({c: self._target(room, c, room_house, here) for c in positions})
                 moving.append(room)
 
         if self.mode == MODE_AUTO and targets:
@@ -442,6 +481,15 @@ class Conductor:
             await self.messages.async_check(self.rooms, stamp)
         for update in list(self._listeners):
             update()
+
+    def _target(self, room: Room, cover: str, house: House, here: int) -> int:
+        if self._curtain(cover):
+            return curtain_position(room.decision, house.phase)
+        if cover in room.cover_azimuth:
+            # Eckzimmer: dieser Rollladen sieht die Sonne zu anderen Zeiten als der Raum
+            cfg = replace(room.cfg, sun_azimuth=room.cover_azimuth[cover])
+            return decide(cfg, room.state, house, here).position
+        return room.decision.position
 
     def _rest(self) -> float:
         return float(self.house[CONF_REST_MINUTES]) * 60

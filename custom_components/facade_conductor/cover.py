@@ -12,13 +12,14 @@ from homeassistant.components.cover import ATTR_POSITION, CoverDeviceClass, Cove
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import FacadeConfigEntry
 from .conductor import Conductor, Room, _position
-from .const import DOMAIN
+from .const import CONF_GROUPS, DOMAIN
 from .entity import RoomEntity
 
 
@@ -29,21 +30,31 @@ async def async_setup_entry(
     rooms = [r for r in conductor.rooms if r.covers]
     areas = ar.async_get(hass)
     floors = fr.async_get(hass)
+    levels = set(conductor.house[CONF_GROUPS])
 
-    groups: list[CoverEntity] = [HouseCover(conductor, rooms)]
+    groups: list[CoverEntity] = [HouseCover(conductor, rooms)] if "house" in levels else []
     by_floor: dict[str, list[Room]] = {}
-    for room in rooms:
+    for room in rooms if "floor" in levels else []:
         area = areas.async_get_area(room.area) if room.area else None
         if area and area.floor_id:
             by_floor.setdefault(area.floor_id, []).append(room)
     for floor_id, members in by_floor.items():
         if (floor := floors.async_get_floor(floor_id)) is not None:
             groups.append(FloorCover(conductor, members, floor_id, floor.name))
+    room_groups = [RoomCover(conductor, room) for room in rooms] if "room" in levels else []
+
+    # abgewählte Ebenen, leere Etagen und Räume ohne Rollladen nicht als verwaiste Entitäten liegen lassen
+    wanted = {g.unique_id for g in [*groups, *room_groups]}
+    ent_reg = er.async_get(hass)
+    for old in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if old.domain == "cover" and old.unique_id not in wanted:
+            ent_reg.async_remove(old.entity_id)
     async_add_entities(groups)
 
     dev_reg = dr.async_get(hass)
-    for room in rooms:
-        async_add_entities([RoomCover(conductor, room)], config_subentry_id=room.subentry_id)
+    for group in room_groups:
+        room = group.room
+        async_add_entities([group], config_subentry_id=room.subentry_id)
         # Raumgruppen gehören in ihren Bereich, dann versteht Assist „Wohnzimmer runter“ ohne Zusatz
         device = dev_reg.async_get_device(identifiers={(DOMAIN, room.subentry_id)})
         if device and device.area_id is None and room.area:
@@ -122,6 +133,7 @@ class RoomCover(RoomEntity, GroupMixin):
     def __init__(self, conductor: Conductor, room: Room) -> None:
         super().__init__(conductor, room, "room_covers")
         self._members = [room]
+        self.room = room
 
     @property
     def available(self) -> bool:

@@ -7,7 +7,8 @@ const STRINGS = await fetch(new URL(`./strings.json${new URL(import.meta.url).se
   .catch(() => ({}));
 
 const TABS = ["overview", "rooms", "settings"];
-const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "heat", "daylight", "behavior", "about"];
+const SECTIONS = ["schedule", "windows", "leave", "safety", "messages", "voice", "heat", "daylight", "weather", "behavior", "about"];
+const GROUPS = ["house", "floor", "room"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade"];
@@ -21,6 +22,7 @@ const REASON_COLOR = {
   sleep: "var(--secondary-text-color)",
   manual: "var(--primary-text-color)",
   safety: "var(--error-color, #db4437)",
+  frost: "var(--info-color, #039be5)",
 };
 
 const pct = (v) => (v == null ? "–" : `${v} %`);
@@ -38,6 +40,24 @@ const matches = (query, text) =>
 // Vorschlag für die Zustände einer gewählten Entität
 const suggestStates = (id) =>
   id.startsWith("media_player.") ? "on, playing, paused" : id.startsWith("alarm_control_panel.") ? "triggered" : "on";
+// Himmelsrichtung der Oberkante des Handys: iPhone liefert sie direkt, Android nur im absoluten Ereignis,
+// dort zählt alpha gegen den Uhrzeigersinn
+const heading = (e) => e.webkitCompassHeading ?? (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
+// gleiche Wörter in beliebiger Reihenfolge, ohne Umlaute und doppelte Buchstaben: „Rolladen - Erdgeschoss“
+// und „Rollläden Erdgeschoss“ klingen für Assist gleich
+const words = (s) =>
+  s
+    .toLowerCase()
+    .replace(/ä/g, "a")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ß/g, "s")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/(.)\1+/g, "$1"))
+    .sort()
+    .join(" ");
+const sameName = (a, b) => words(a) === words(b);
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -336,12 +356,55 @@ class FacadeConductorPanel extends HTMLElement {
 
   _sec_messages(info) {
     const h = info.house;
-    const on = [h.notify_unreachable && this._t("msg_unreachable"), h.notify_manual && this._t("msg_manual")].filter(Boolean);
+    const events = ["unreachable", "manual", "safety"];
+    const on = events.filter((e) => h[`notify_${e}`] || h[`announce_${e}`]).map((e) => this._t(`msg_${e}`));
+    const speakers = Object.keys(this._hass.states).filter((id) => id.startsWith("notify."));
     return [
       on.length ? on.join(" · ") : this._t("off"),
-      `<label class="switch"><input type="checkbox" data-notify="notify_unreachable" ${h.notify_unreachable ? "checked" : ""}> ${esc(this._t("msg_unreachable_long"))}</label>
-       <label class="switch"><input type="checkbox" data-notify="notify_manual" ${h.notify_manual ? "checked" : ""}> ${esc(this._t("msg_manual_long"))}</label>
+      `${events
+        .map(
+          (e) => `<div class="row"><span>${esc(this._t(`msg_${e}_long`))}</span><span class="row start">
+            <label class="switch"><input type="checkbox" data-notify="notify_${e}" ${h[`notify_${e}`] ? "checked" : ""}> ${esc(this._t("push"))}</label>
+            <label class="switch"><input type="checkbox" data-notify="announce_${e}" ${h[`announce_${e}`] ? "checked" : ""}> ${esc(this._t("announce"))}</label>
+          </span></div>`,
+        )
+        .join("")}
+       <label class="field">${esc(this._t("speaker_house"))}
+         ${this._combo("h-speaker", "house", "speaker", speakers, h.speaker)}</label>
        <p class="muted">${esc(this._t("messages_hint"))}</p>`,
+    ];
+  }
+
+  _sec_voice(info) {
+    const levels = new Set(info.house.groups || []);
+    const on = GROUPS.filter((g) => levels.has(g)).map((g) => this._t(`group_${g}`));
+    // Gruppen, die es in Home Assistant schon gibt, etwa „Rolladen - Erdgeschoss“
+    const own = new Set((info.voice || []).map((g) => g.entity_id));
+    const groups = Object.keys(this._hass.states).filter(
+      (id) => id.startsWith("cover.") && !own.has(id) && Array.isArray(this._hass.states[id].attributes.entity_id),
+    );
+    const rows = (info.voice || [])
+      .map((g) => {
+        const names = [this._name(g.entity_id).replace(/^Facade Conductor /, ""), ...g.aliases];
+        const clash = groups.filter((o) => names.some((n) => sameName(n, this._name(o))));
+        const ideas = this._t(`alias_${g.kind}`, { name: g.name || "" })
+          .split(", ")
+          .filter((a) => !g.aliases.includes(a));
+        return `<div class="alias">
+          <label class="field">${esc(this._name(g.entity_id))}
+            <input class="filter" data-alias="${esc(g.entity_id)}" value="${esc(g.aliases.join(", "))}" placeholder="${esc(this._t("alias_none"))}"></label>
+          ${clash.length ? `<div class="hint">${esc(this._t("alias_clash", { names: clash.map((o) => this._name(o)).join(", ") }))}</div>` : ""}
+          ${ideas.length ? `<div class="row start"><span class="muted">${esc(this._t("alias_ideas"))}</span>${ideas.map((a) => `<button class="btn2" data-alias-add="${esc(g.entity_id)}" data-value="${esc(a)}">+ ${esc(a)}</button>`).join("")}</div>` : ""}
+        </div>`;
+      })
+      .join("");
+    return [
+      on.length ? on.join(" · ") : this._t("off"),
+      `<p class="muted">${esc(this._t("groups_hint"))}</p>
+       <div class="row start">${GROUPS.map((g) => `<label class="switch"><input type="checkbox" data-group-level value="${g}" ${levels.has(g) ? "checked" : ""}> ${esc(this._t(`group_${g}`))}</label>`).join("")}</div>
+       <h3>${esc(this._t("aliases"))}</h3>
+       <p class="muted">${esc(this._t("aliases_hint"))}</p>
+       ${rows || `<p class="muted">${esc(this._t("no_groups"))}</p>`}`,
     ];
   }
 
@@ -377,6 +440,28 @@ class FacadeConductorPanel extends HTMLElement {
          <label class="field">${esc(this._t("lux_bright"))} ${num("lux_bright")}</label>
        </div>
        <p class="muted">${esc(this._t("daylight_hint"))}</p>`,
+    ];
+  }
+
+  _sec_weather(info) {
+    const h = info.house;
+    const temps = Object.keys(this._hass.states).filter(
+      (id) => id.startsWith("sensor.") && this._hass.states[id].attributes.device_class === "temperature",
+    );
+    const rain = Object.keys(this._hass.states).filter(
+      (id) =>
+        (id.startsWith("sensor.") && ["precipitation_intensity", "precipitation"].includes(this._hass.states[id].attributes.device_class)) ||
+        (id.startsWith("binary_sensor.") && this._hass.states[id].attributes.device_class === "moisture") ||
+        /rain|regen/.test(id),
+    );
+    const on = h.outdoor_temp && h.rain_sensor;
+    return [
+      info.frost ? this._t("frost_now") : on ? this._t("frost_on") : this._t("off"),
+      `<label class="field">${esc(this._t("outdoor_temp"))}
+         ${this._combo("h-outdoor_temp", "house", "outdoor_temp", temps, h.outdoor_temp)}</label>
+       <label class="field">${esc(this._t("rain_sensor"))}
+         ${this._combo("h-rain_sensor", "house", "rain_sensor", rain, h.rain_sensor)}</label>
+       <p class="muted">${esc(this._t("frost_hint"))}</p>`,
     ];
   }
 
@@ -580,7 +665,7 @@ class FacadeConductorPanel extends HTMLElement {
         `<line x1="${m.win[0]}" y1="${m.win[1]}" x2="${tip[0]}" y2="${tip[1]}" stroke="#ff9800" stroke-width="6" stroke-linecap="round"/>` +
         overlay;
     }
-    const name = m.deg == null ? "" : this._t(`dir_${DIRECTIONS.slice(1)[Math.round(m.deg / 45) % 8]}`);
+    const name = m.deg == null ? "" : this._dirName(m.deg);
     return `<div class="mapbox">
         <p class="muted">${esc(this._t(m.win ? "map_step2" : "map_step1"))}</p>
         <div class="map" data-map>
@@ -594,6 +679,54 @@ class FacadeConductorPanel extends HTMLElement {
           <button class="btn2" data-map-cancel>${esc(this._t("map_cancel"))}</button>
         </div>
       </div>`;
+  }
+
+  _dirName(deg) {
+    return this._t(`dir_${DIRECTIONS.slice(1)[Math.round(deg / 45) % 8]}`);
+  }
+
+  // Kompass des Handys: am Fenster stehen, Oberkante nach draußen
+  _compassView() {
+    const c = this._compass;
+    const cancel = `<button class="btn2" data-compass-cancel>${esc(this._t("map_cancel"))}</button>`;
+    if (!window.isSecureContext) return `<div class="mapbox"><p class="muted">${esc(this._t("compass_https"))}</p><div>${cancel}</div></div>`;
+    return `<div class="mapbox">
+        <p class="muted">${esc(this._t("compass_how"))}</p>
+        <p><b id="compass-deg">${esc(c.deg == null ? this._t("compass_wait") : `${Math.round(c.deg)}°, ${this._dirName(c.deg)}`)}</b></p>
+        <div class="row start">
+          <button class="btn" data-compass-save ${c.deg == null ? "disabled" : ""}>${esc(this._t("map_save"))}</button>
+          ${cancel}
+        </div>
+      </div>`;
+  }
+
+  _compassStart() {
+    const onTurn = (e) => {
+      const deg = heading(e);
+      if (deg == null || !this._compass) return;
+      this._compass.deg = deg;
+      const out = this.shadowRoot.getElementById("compass-deg");
+      if (out) out.textContent = `${Math.round(deg)}°, ${this._dirName(deg)}`;
+      this.shadowRoot.querySelector("[data-compass-save]")?.removeAttribute("disabled");
+    };
+    const start = () => {
+      window.addEventListener("deviceorientationabsolute", onTurn);
+      window.addEventListener("deviceorientation", onTurn);
+      this._compass.stop = () => {
+        window.removeEventListener("deviceorientationabsolute", onTurn);
+        window.removeEventListener("deviceorientation", onTurn);
+      };
+    };
+    // iPhone und neuere Chrome fragen erst um Erlaubnis, und das nur direkt nach einem Tippen
+    const ask = window.DeviceOrientationEvent?.requestPermission;
+    const denied = () => this._flash(this._t("compass_denied"));
+    if (ask) ask.call(window.DeviceOrientationEvent).then((r) => (r === "granted" ? start() : denied()), denied);
+    else start();
+  }
+
+  _compassStop() {
+    this._compass?.stop?.();
+    this._compass = null;
   }
 
   _roomForm(room, info) {
@@ -677,7 +810,26 @@ class FacadeConductorPanel extends HTMLElement {
             ${DIRECTIONS.map((x) => `<option value="${x}" ${d.direction_deg == null && (d.direction || "none") === x ? "selected" : ""}>${esc(this._t(`dir_${x}`))}</option>`).join("")}
           </select></label>
         <p class="muted">${esc(this._t("direction_hint"))}</p>
-        ${this._map && this._map.room === room.id ? this._mapView() : `<div><button class="btn2" data-map-open>${esc(this._t("map_open"))}</button></div>`}
+        ${(d.covers || []).length > 1
+          ? `<details class="sub" ${Object.keys(d.cover_directions || {}).length ? "open" : ""}><summary>${esc(this._t("cover_directions"))}</summary>
+              <p class="muted">${esc(this._t("cover_directions_hint"))}</p>
+              <div class="positions">${d.covers
+                .map(
+                  (c) => `<label class="field">${esc(this._name(c))}
+                    <input type="number" min="0" max="359" step="1" data-cover-dir="${esc(c)}"
+                      value="${esc((d.cover_directions || {})[c] ?? "")}" placeholder="${esc(this._t("like_room"))}"></label>`,
+                )
+                .join("")}</div></details>`
+          : ""}
+        ${
+          this._map && this._map.room === room.id
+            ? this._mapView()
+            : this._compass && this._compass.room === room.id
+              ? this._compassView()
+              : `<div class="row start"><button class="btn2" data-map-open>${esc(this._t("map_open"))}</button>${
+                  "DeviceOrientationEvent" in window ? `<button class="btn2" data-compass>${esc(this._t("compass_open"))}</button>` : ""
+                }</div>`
+        }
       </div>
       <div class="card">
         <h3>${esc(this._t("cooling"))}</h3>
@@ -686,6 +838,8 @@ class FacadeConductorPanel extends HTMLElement {
         <label class="field">${esc(this._t("cooling_above"))}
           <input id="f-cooling-above" type="number" min="10" max="40" step="0.5" data-field="cooling_above"
             value="${esc(d.cooling_above ?? "")}" placeholder="24"></label>
+        <label class="switch"><input type="checkbox" id="f-cooling-outside" ${d.cooling_outside ? "checked" : ""}> ${esc(this._t("cooling_outside"))}</label>
+        ${d.cooling_outside && !info.house.outdoor_temp ? `<div class="hint">${esc(this._t("cooling_outside_missing"))}</div>` : ""}
         <p class="muted">${esc(this._t("cooling_hint"))}</p>
       </div>
       <div class="card">
@@ -702,7 +856,7 @@ class FacadeConductorPanel extends HTMLElement {
         <label class="field">${esc(this._t("wake_minutes"))}
           <input id="f-wake" type="number" min="0" max="120" step="1" data-field="sleep_wake_minutes"
             value="${esc(d.sleep_wake_minutes ?? "")}" placeholder="${esc(this._t("wake_now"))}"></label>
-        <p class="muted">${esc(this._t("wake_hint"))}</p>
+        <p class="muted">${esc(this._t("wake_minutes_hint"))}</p>
         <div class="row start">
           <label class="field">${esc(this._t("pause_start"))}
             <input id="f-pause-start" ${TIME_FIELD} data-pause="sleep_pause_start" value="${esc((pause.sleep_pause_start || "").slice(0, 5))}"></label>
@@ -725,6 +879,12 @@ class FacadeConductorPanel extends HTMLElement {
             </select></label>
         </div>
         <p class="muted">${esc(this._t("wake_hint"))}</p>
+      </div>
+      <div class="card">
+        <h3>${esc(this._t("speaker"))}</h3>
+        <label class="field">${esc(this._t("speaker_room"))}
+          ${this._combo("f-speaker", "room", "speaker", all.filter((id) => id.startsWith("notify.")), d.speaker)}</label>
+        <p class="muted">${esc(this._t("speaker_hint"))}</p>
       </div>
       <div class="card">
         <h3>${esc(this._t("positions"))}</h3>
@@ -899,6 +1059,47 @@ class FacadeConductorPanel extends HTMLElement {
       else m.deg = ((Math.atan2(point[0] - m.win[0], m.win[1] - point[1]) * 180) / Math.PI + 360) % 360;
       this._render();
     });
+    root.querySelector("[data-compass]")?.addEventListener("click", () => {
+      this._map = null;
+      this._compass = { room: this._room, deg: null };
+      this._render();
+      if (window.isSecureContext) this._compassStart();
+    });
+    root.querySelector("[data-compass-cancel]")?.addEventListener("click", () => (this._compassStop(), this._render()));
+    root.querySelector("[data-compass-save]")?.addEventListener("click", () => {
+      const deg = Math.round(this._compass.deg);
+      this._compassStop();
+      save({ direction_deg: deg });
+    });
+    root.getElementById("f-cooling-outside")?.addEventListener("change", (e) => save({ cooling_outside: e.target.checked }));
+    root.querySelectorAll("[data-cover-dir]").forEach((el) =>
+      el.addEventListener("change", () => {
+        const dirs = {};
+        root.querySelectorAll("[data-cover-dir]").forEach((i) => i.value !== "" && (dirs[i.dataset.coverDir] = Number(i.value)));
+        save({ cover_directions: dirs });
+      }),
+    );
+    root.querySelectorAll("[data-group-level]").forEach((el) =>
+      el.addEventListener("change", () =>
+        saveHouse({ groups: [...root.querySelectorAll("[data-group-level]:checked")].map((c) => c.value) }),
+      ),
+    );
+    const saveAliases = (entityId, aliases) => {
+      this._info.voice.find((g) => g.entity_id === entityId).aliases = aliases;
+      return this._call({ type: "facade_conductor/aliases", entity_id: entityId, aliases });
+    };
+    root.querySelectorAll("[data-alias]").forEach((el) =>
+      el.addEventListener("change", () =>
+        saveAliases(el.dataset.alias, el.value.split(",").map((a) => a.trim()).filter(Boolean)),
+      ),
+    );
+    root.querySelectorAll("[data-alias-add]").forEach((el) =>
+      el.addEventListener("click", () => {
+        const group = this._info.voice.find((g) => g.entity_id === el.dataset.aliasAdd);
+        saveAliases(group.entity_id, [...group.aliases, el.dataset.value]);
+        this._render();
+      }),
+    );
     root.querySelectorAll("[data-sit-del]").forEach((el) =>
       el.addEventListener("click", () => {
         const room = this._info.rooms.find((r) => r.id === this._room);
@@ -971,6 +1172,7 @@ const STYLE = `
   .combo-list li[aria-selected="true"], .combo-list li[data-i]:hover { background: rgba(var(--rgb-primary-color, 3, 169, 244), .15); }
   .combo-list li .muted { font-size: 12px; }
   input.filter { max-width: 320px; }
+  .alias { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
   .mapbox { display: flex; flex-direction: column; gap: 8px; }
   .map { position: relative; width: 100%; max-width: 768px; aspect-ratio: 1; overflow: hidden; border-radius: 8px; cursor: crosshair; background: #ddd; }
   .map img { position: absolute; width: 33.334%; height: 33.334%; }

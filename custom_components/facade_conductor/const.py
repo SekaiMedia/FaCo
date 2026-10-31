@@ -19,6 +19,16 @@ CONF_LEAVE_EXCLUDE_PERSONS = "leave_exclude_persons"
 CONF_SAFETY = "safety"
 CONF_NOTIFY_UNREACHABLE = "notify_unreachable"
 CONF_NOTIFY_MANUAL = "notify_manual"
+CONF_ANNOUNCE_UNREACHABLE = "announce_unreachable"
+CONF_ANNOUNCE_MANUAL = "announce_manual"
+# Haus: Lautsprecher für Räume ohne eigenen; Raum: eigener Lautsprecher
+CONF_SPEAKER = "speaker"
+CONF_GROUPS = "groups"
+CONF_NOTIFY_SAFETY = "notify_safety"
+CONF_ANNOUNCE_SAFETY = "announce_safety"
+CONF_OUTDOOR_TEMP = "outdoor_temp"
+CONF_RAIN_SENSOR = "rain_sensor"
+GROUP_OPTIONS = ["house", "floor", "room"]
 
 # Raum
 CONF_AREA = "area"
@@ -35,6 +45,9 @@ CONF_WAKE_SENSOR = "wake_sensor"
 CONF_WAKE_LEAD = "wake_lead"
 CONF_WAKE_WAIT = "wake_wait"
 CONF_COOLING_ABOVE = "cooling_above"
+CONF_COOLING_OUTSIDE = "cooling_outside"
+# Eckzimmer: Gradzahl je Rollladen, sonst gilt die Richtung des Raums
+CONF_COVER_DIRECTIONS = "cover_directions"
 DEFAULT_COOLING_ABOVE = 24
 DEFAULT_SLEEP_WATTS = 5
 CONF_DIRECTION = "direction"
@@ -59,6 +72,14 @@ DEFAULTS = {
     CONF_SAFETY: [],
     CONF_NOTIFY_UNREACHABLE: True,
     CONF_NOTIFY_MANUAL: False,
+    CONF_ANNOUNCE_UNREACHABLE: False,
+    CONF_ANNOUNCE_MANUAL: False,
+    CONF_SPEAKER: None,
+    CONF_GROUPS: GROUP_OPTIONS,
+    CONF_NOTIFY_SAFETY: False,
+    CONF_ANNOUNCE_SAFETY: False,
+    CONF_OUTDOOR_TEMP: None,
+    CONF_RAIN_SENSOR: None,
 }
 
 WINDOW_MEANS_OPTIONS = ["tilted", "open"]

@@ -242,7 +242,8 @@
           "window_tilted": "Window tilted",
           "window_open": "Window open",
           "manual": "Manual",
-          "safety": "Safety"
+          "safety": "Safety",
+          "frost": "Frost protection"
         }
       },
       "target_position": {
@@ -261,6 +262,12 @@
       "manual": {
         "name": "Manual"
       }
+    }
+  },
+  "issues": {
+    "unreachable": {
+      "title": "{cover} unreachable",
+      "description": "{cover} in {room} has been unreachable for 15 minutes. Facade Conductor moves it again once it is back. Check power and the radio connection. This entry disappears by itself."
     }
   }
 }

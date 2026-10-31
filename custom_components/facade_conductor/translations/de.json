@@ -242,7 +242,8 @@
           "window_tilted": "Fenster gekippt",
           "window_open": "Fenster offen",
           "manual": "Handbetrieb",
-          "safety": "Sicherheit"
+          "safety": "Sicherheit",
+          "frost": "Frostschutz"
         }
       },
       "target_position": {
@@ -261,6 +262,12 @@
       "manual": {
         "name": "Handbetrieb"
       }
+    }
+  },
+  "issues": {
+    "unreachable": {
+      "title": "{cover} nicht erreichbar",
+      "description": "{cover} im Raum {room} ist seit 15 Minuten nicht erreichbar. Facade Conductor fährt ihn erst wieder, wenn er zurück ist. Prüfe Strom und Funkverbindung. Der Eintrag verschwindet von selbst."
     }
   }
 }

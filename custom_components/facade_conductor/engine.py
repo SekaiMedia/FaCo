@@ -35,11 +35,13 @@ class Reason(str, Enum):
     WINDOW_TILTED = "window_tilted"
     WINDOW_OPEN = "window_open"
     MANUAL = "manual"
+    FROST = "frost"
     SAFETY = "safety"
 
 
 LEVEL = {
     Reason.SAFETY: 1,
+    Reason.FROST: 1,
     Reason.MANUAL: 2,
     Reason.WINDOW_TILTED: 3,
     Reason.WINDOW_OPEN: 3,
@@ -81,6 +83,7 @@ class RoomState:
     hold: int | None = None  # aktive Situation „nicht verändern“
     manual: int | None = None  # Handbetrieb
     safety: int | None = None  # Sicherheit: Alarm, Rauch, Stromausfall
+    frost: bool = False  # Frostschutz: nicht fahren, damit nichts festfriert
 
 
 @dataclass(frozen=True)
@@ -156,6 +159,10 @@ def decide(cfg: RoomConfig, room: RoomState, house: House, current: int) -> Deci
     if room.manual is not None:
         pos, reason = room.manual, Reason.MANUAL
 
+    # schützt das Gerät, deshalb über dem Handbetrieb, aber unter der Sicherheit der Menschen
+    if room.frost:
+        pos, reason = current, Reason.FROST
+
     if room.safety is not None:
         pos, reason = room.safety, Reason.SAFETY
 
@@ -167,12 +174,70 @@ def sleep_on(state: str | None, watts: float | None) -> bool:
     return state == "on" if watts is None else at_least(state, watts)
 
 
+def warm_step(
+    inside: str | None, threshold: float, was_warm: bool, outside: str | None = None, need_cooler: bool = False
+) -> bool:
+    """Abendkühlung: warm ab der Schwelle, wieder kühl erst 0,5 °C darunter, damit die Grenze nicht flattert.
+
+    Auf Wunsch nur, wenn es draußen kühler ist als drinnen; ohne Außenwert dann nicht.
+    """
+    try:
+        t = float(inside)
+    except (TypeError, ValueError):
+        return False
+    warm = t >= threshold or (was_warm and t >= threshold - 0.5)
+    if warm and need_cooler:
+        try:
+            return float(outside) < t
+        except (TypeError, ValueError):
+            return False
+    return warm
+
+
+FROST_RAIN_WITHIN = 12 * 3600
+
+
+def raining(state: str | None) -> bool:
+    """Regensensor: ein Schalter mit „on“ oder eine Regenmenge über 0."""
+    return state == "on" or at_least(state, 0.01)
+
+
+def frost_step(active: bool, temperature: str | None, last_rain: float | None, now: float) -> bool:
+    """Frostschutz: nach Regen bei 0 °C oder kälter nicht fahren, damit nichts festfriert und reißt.
+
+    Gilt, wenn es in den letzten 12 Stunden geregnet hat, und hält, bis es über 1 °C warm ist.
+    """
+    try:
+        t = float(temperature)
+    except (TypeError, ValueError):
+        return False
+    if active:
+        return t <= 1
+    return t <= 0 and last_rain is not None and now - last_rain <= FROST_RAIN_WITHIN
+
+
 def at_least(state: str | None, threshold: float) -> bool:
     """Messwert mindestens so hoch wie die Schwelle; nicht verfügbar zählt als nein."""
     try:
         return float(state) >= threshold
     except (TypeError, ValueError):
         return False
+
+
+def away(person_state: str | None) -> bool:
+    """Ist die Person sicher unterwegs? Unbekannt zählt als zu Hause, damit kein Wecker verloren geht."""
+    return person_state not in (None, "home", "unknown", "unavailable")
+
+
+ANNOUNCE_REPEAT = 1800
+
+
+def may_announce(key: str, now: float, last: dict[str, float], quiet: bool) -> bool:
+    """Durchsage nicht nachts und nicht, solange jemand schläft; dieselbe höchstens alle 30 Minuten."""
+    if quiet or now - last.get(key, float("-inf")) < ANNOUNCE_REPEAT:
+        return False
+    last[key] = now
+    return True
 
 
 def wake_until(alarm: float | None, now: float, until: float | None, lead: float, end: float) -> float | None:
@@ -197,7 +262,7 @@ def wake_phase(phase: Phase, dark: bool, wait_for_light: bool) -> Phase:
     return Phase.DAY
 
 
-def safety_position(triggers: list[dict], states: dict[str, str | None], anyone_home: bool) -> int | None:
+def safety_trigger(triggers: list[dict], states: dict[str, str | None], anyone_home: bool) -> tuple[str, int] | None:
     """Erster aktiver Sicherheits-Auslöser mit einer Position für „jemand zu Hause“ oder „Haus leer“.
 
     Eine leere Position heißt: dieser Auslöser tut in dieser Lage nichts.
@@ -206,8 +271,13 @@ def safety_position(triggers: list[dict], states: dict[str, str | None], anyone_
         if states.get(trigger["entity"]) in trigger["states"]:
             position = trigger.get("home" if anyone_home else "away")
             if position is not None:
-                return position
+                return trigger["entity"], position
     return None
+
+
+def safety_position(triggers: list[dict], states: dict[str, str | None], anyone_home: bool) -> int | None:
+    found = safety_trigger(triggers, states, anyone_home)
+    return found[1] if found else None
 
 
 def situation_hold(
@@ -347,6 +417,37 @@ class CommandLog:
             return False
         last = self._sent.get(entity_id)
         return last is None or now - last >= self.grace
+
+
+class LuxFilter:
+    """Helligkeit wie ein Mensch sie sieht: Mittel über 10 Minuten statt Momentwert, zwei Schwellen, und ein
+    Wechsel muss einige Minuten gelten. Schwankt das Licht stark, wie bei Aprilwetter, doppelt so lange.
+    """
+
+    def __init__(self, low: float, high: float, window: float = 600, hold: float = 300) -> None:
+        self.low, self.high, self.window, self.hold = low, high, window, hold
+        self.dark: bool | None = None
+        self._samples: list[tuple[float, float]] = []
+        self._since: float | None = None
+
+    def update(self, value: float, now: float) -> bool:
+        self._samples = [(t, v) for t, v in self._samples if now - t < self.window] + [(now, value)]
+        values = [v for _, v in self._samples]
+        mean = sum(values) / len(values)
+        if self.dark is None:
+            # nach dem Start gleich richtig liegen, nicht erst nach der Wartezeit
+            self.dark = value < (self.low + self.high) / 2
+            return self.dark
+        wants = mean <= self.high if self.dark else mean < self.low
+        if wants == self.dark:
+            self._since = None
+            return self.dark
+        if self._since is None:
+            self._since = now
+        hold = self.hold * (2 if max(values) - min(values) > mean else 1)
+        if now - self._since >= hold:
+            self.dark, self._since = wants, None
+        return self.dark
 
 
 class Hysteresis:

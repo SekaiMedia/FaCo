@@ -23,6 +23,11 @@ from facade_engine import (  # noqa: E402
     phase_for,
     House,
     Hysteresis,
+    LuxFilter,
+    frost_step,
+    raining,
+    safety_trigger,
+    warm_step,
     Phase,
     Positions,
     Reason as R,
@@ -37,7 +42,9 @@ from facade_engine import (  # noqa: E402
     LEAVE_WARNED,
     at_least,
     curtain_position,
+    away,
     due_unreachable,
+    may_announce,
     in_range,
     leave_step,
     may_move,
@@ -169,6 +176,75 @@ class Werkzeuge(unittest.TestCase):
         h = Hysteresis(2500, 4000)
         self.assertEqual([h.update(v) for v in (6000, 3000, 2400, 3500, 3900, 4100)],
                          [False, False, True, True, True, False])
+
+    def test_licht_gemittelt_mit_wartezeit(self):
+        f = LuxFilter(2500, 4000)
+        self.assertFalse(f.update(6000, 0))  # nach dem Start sofort richtig
+        # eine Wolke für drei Minuten: kein Wechsel
+        self.assertEqual([f.update(v, t) for t, v in ((60, 900), (120, 900), (180, 900), (240, 6000), (300, 6000), (600, 6000))],
+                         [False] * 6)
+        # echte Dämmerung: erst nach fünf Minuten unter der Schwelle im Mittel
+        g = LuxFilter(2500, 4000)
+        g.update(2000, 0)
+        self.assertTrue(g.dark)
+        h = LuxFilter(2500, 4000)
+        h.update(3500, 0)  # Start über der Mitte zwischen beiden Schwellen: hell
+        results = [h.update(1000, t) for t in range(60, 900, 60)]
+        first = 60 + 60 * results.index(True)
+        self.assertGreaterEqual(first, 300)
+        self.assertLessEqual(first, 600)
+
+    def test_licht_dunkel_trotz_kurzer_lichtblicke(self):
+        # Dämmerung mit einem hellen Moment alle vier Minuten: ein Momentwert finge die Wartezeit immer neu an
+        f = LuxFilter(2500, 4000)
+        f.update(3500, 0)
+        self.assertTrue(any(f.update(5000 if t % 240 == 0 else 1000, t) for t in range(60, 1200, 60)))
+
+    def test_licht_bei_aprilwetter_laenger_warten(self):
+        calm, stormy = LuxFilter(2500, 4000), LuxFilter(2500, 4000)
+        calm.update(3500, 0)
+        stormy.update(3500, 0)
+        t_calm = next(t for t in range(60, 2000, 60) if calm.update(1000, t))
+        # wechselnd 100 und 3000 lx: im Mittel dunkel, aber stark schwankend
+        t_storm = next(t for t in range(60, 2000, 60) if stormy.update(100 if t % 120 else 3000, t))
+        self.assertGreater(t_storm, t_calm)
+
+    def test_abendkuehlung_flattert_nicht(self):
+        self.assertTrue(warm_step("24.0", 24, False))
+        self.assertFalse(warm_step("23.8", 24, False))
+        self.assertTrue(warm_step("23.6", 24, True))  # bleibt warm bis unter 23,5
+        self.assertFalse(warm_step("23.4", 24, True))
+        self.assertFalse(warm_step(None, 24, True))
+
+    def test_abendkuehlung_nur_wenn_draussen_kuehler(self):
+        self.assertTrue(warm_step("25", 24, False, outside="18", need_cooler=True))
+        self.assertFalse(warm_step("25", 24, False, outside="27", need_cooler=True))
+        self.assertFalse(warm_step("25", 24, False, outside=None, need_cooler=True))
+        self.assertTrue(warm_step("25", 24, False, outside="27"))  # ohne Option egal
+
+    def test_frostschutz(self):
+        hour = 3600
+        self.assertFalse(frost_step(False, "-2", None, 0))  # kein Regen
+        self.assertTrue(frost_step(False, "-2", 0, 11 * hour))
+        self.assertFalse(frost_step(False, "-2", 0, 13 * hour))  # Regen zu lange her
+        self.assertFalse(frost_step(False, "0.5", 0, hour))  # nicht kalt genug
+        self.assertTrue(frost_step(True, "0.8", 0, 30 * hour))  # Eis hält, bis es taut
+        self.assertFalse(frost_step(True, "1.5", 0, 30 * hour))
+        self.assertFalse(frost_step(True, "unavailable", 0, hour))
+        self.assertTrue(raining("0.3"))
+        self.assertTrue(raining("on"))
+        self.assertFalse(raining("0.0"))
+
+    def test_frost_haelt_position(self):
+        state = RoomState(frost=True, manual=0)
+        self.assertEqual(decide(RoomConfig(), state, House(Phase.NIGHT, 23.5), current=60), Decision(60, R.FROST))
+        alarm = RoomState(frost=True, safety=100)  # Menschen vor Gerät
+        self.assertEqual(decide(RoomConfig(), alarm, House(Phase.NIGHT, 23.5), current=60), Decision(100, R.SAFETY))
+
+    def test_sicherheit_nennt_ausloeser(self):
+        triggers = [{"entity": "binary_sensor.rauch", "states": ["on"], "home": 100, "away": None}]
+        self.assertEqual(safety_trigger(triggers, {"binary_sensor.rauch": "on"}, True), ("binary_sensor.rauch", 100))
+        self.assertIsNone(safety_trigger(triggers, {"binary_sensor.rauch": "on"}, False))
 
     def test_himmelsrichtung(self):
         self.assertEqual(direction_range("e"), (45, 135))
@@ -302,6 +378,21 @@ class Werkzeuge(unittest.TestCase):
         self.assertEqual(direction_range(172), (127, 217))  # auf der Karte gemessen
         self.assertEqual(direction_range(20), (335, 65))
         self.assertEqual(direction_range("s"), (135, 225))
+
+    def test_wecker_nur_zu_hause(self):
+        self.assertFalse(away("home"))
+        self.assertTrue(away("not_home"))
+        self.assertTrue(away("Arbeit"))  # andere Zone
+        self.assertFalse(away(None))  # Sensor gehört keiner Person
+        self.assertFalse(away("unknown"))  # lieber wecken als verschlafen
+
+    def test_durchsage_mit_ruhe(self):
+        last = {}
+        self.assertFalse(may_announce("a", 0, last, quiet=True))  # nachts oder jemand schläft
+        self.assertTrue(may_announce("a", 0, last, quiet=False))
+        self.assertFalse(may_announce("a", 1799, last, quiet=False))  # dieselbe nicht sofort wieder
+        self.assertTrue(may_announce("b", 1799, last, quiet=False))  # eine andere schon
+        self.assertTrue(may_announce("a", 1800, last, quiet=False))
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))

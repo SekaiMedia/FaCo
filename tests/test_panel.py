@@ -43,6 +43,7 @@ class Einstellungsseite(unittest.TestCase):
         self.assertEqual(_js_list("MODES"), _const("MODES"))
         self.assertEqual(_js_list("DIRECTIONS"), _const("DIRECTION_OPTIONS"))
         self.assertEqual(_js_list("POSITIONS"), list(_const("POSITION_KEYS")))
+        self.assertEqual(_js_list("GROUPS"), _const("GROUP_OPTIONS"))
 
     def test_jeder_reiter_hat_seite(self):
         for tab in _js_list("TABS"):
@@ -73,6 +74,33 @@ class Einstellungsseite(unittest.TestCase):
         out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
         self.assertEqual(dict(zip(cases, json.loads(out))), cases)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js fehlt")
+    def test_kompass(self):
+        source = re.search(r"const heading = .*?;\n", PANEL, re.S).group(0)
+        cases = [
+            ({"webkitCompassHeading": 176}, 176),  # iPhone
+            ({"absolute": True, "alpha": 90}, 270),  # Android: Oberkante nach Westen
+            ({"absolute": True, "alpha": 0}, 0),
+            ({"absolute": False, "alpha": 90}, None),  # relativ zum Start, ohne Norden
+            ({"absolute": True, "alpha": None}, None),
+        ]
+        script = source + f"console.log(JSON.stringify({json.dumps([c[0] for c in cases])}.map((e) => heading(e))));"
+        out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(out), [c[1] for c in cases])
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js fehlt")
+    def test_aehnliche_namen(self):
+        source = re.search(r"const words = .*?const sameName = .*?;\n", PANEL, re.S).group(0)
+        cases = [
+            ("Rollläden Erdgeschoss", "Rolladen - Erdgeschoss", True),
+            ("Büro Rollläden", "Rollladen Büro", True),  # Reihenfolge egal
+            ("Rollos Erdgeschoss", "Rolladen Erdgeschoss", False),
+            ("Rollläden Obergeschoss", "Rolladen Erdgeschoss", False),
+        ]
+        script = source + f"console.log(JSON.stringify({json.dumps([c[:2] for c in cases])}.map(([a, b]) => sameName(a, b))));"
+        out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(out), [c[2] for c in cases])
+
     def test_jeder_text_vorhanden(self):
         used = set(re.findall(r'_t\("(\w+)"', PANEL))
         used |= {f"mode_{m}" for m in _js_list("MODES")}
@@ -83,6 +111,9 @@ class Einstellungsseite(unittest.TestCase):
         used |= {f"sec_{s}" for s in _js_list("SECTIONS")}
         used |= {f"mode_{m}_text" for m in _js_list("MODES")}
         used |= {f"phase_{p}" for p in ("day", "dusk", "night")}
+        used |= {f"group_{g}" for g in _js_list("GROUPS")}
+        used |= {f"alias_{g}" for g in _js_list("GROUPS")}
+        used |= {f"msg_{e}{x}" for e in ("unreachable", "manual", "safety") for x in ("", "_long")}
         self.assertGreater(len(used), 40)
         for lang in ("de", "en"):
             with self.subTest(lang=lang):
