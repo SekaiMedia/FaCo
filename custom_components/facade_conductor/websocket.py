@@ -25,6 +25,9 @@ from .const import (
     CONF_COVERS,
     CONF_DIRECTION,
     CONF_HOT_TEMPERATURE,
+    CONF_LEAVE_CONTACTS,
+    CONF_LEAVE_ENABLED,
+    CONF_LEAVE_EXCLUDE_PERSONS,
     CONF_LUX_BRIGHT,
     CONF_LUX_DARK,
     CONF_LUX_SENSOR,
@@ -47,6 +50,7 @@ from .const import (
     SUBENTRY_ROOM,
     WINDOW_MEANS_OPTIONS,
 )
+from .leave import phones
 
 TIME_TEXT = vol.Match(r"^\d{2}:\d{2}(:\d{2})?$")
 PERCENT = vol.All(vol.Coerce(int), vol.Range(min=0, max=100))
@@ -79,6 +83,9 @@ HOUSE_CHANGES = vol.Schema(
         vol.Optional(CONF_NIGHT_END): TIME_TEXT,
         vol.Optional(CONF_REST_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=0, max=240)),
         vol.Optional(CONF_POSITIONS): {vol.In(POSITION_KEYS): PERCENT},
+        vol.Optional(CONF_LEAVE_ENABLED): bool,
+        vol.Optional(CONF_LEAVE_CONTACTS): vol.All(cv.ensure_list, [cv.entity_domain("binary_sensor")]),
+        vol.Optional(CONF_LEAVE_EXCLUDE_PERSONS): vol.All(cv.ensure_list, [cv.entity_domain("person")]),
     }
 )
 HOUSE_KEYS = [k.schema for k in HOUSE_CHANGES.schema if k.schema != CONF_POSITIONS]
@@ -86,7 +93,7 @@ HOUSE_KEYS = [k.schema for k in HOUSE_CHANGES.schema if k.schema != CONF_POSITIO
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
-    for command in (ws_info, ws_house_update, ws_room_add, ws_room_update, ws_room_remove):
+    for command in (ws_info, ws_house_update, ws_leave_test, ws_room_add, ws_room_update, ws_room_remove):
         websocket_api.async_register_command(hass, command)
 
 
@@ -143,6 +150,10 @@ def ws_info(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg
             "house": {k: conductor.house.get(k) for k in HOUSE_KEYS},
             "positions": {k: int(v) for k, v in {**DEFAULT_POSITIONS, **conductor.house.get(CONF_POSITIONS, {})}.items()},
             "rooms": sorted(rooms, key=lambda r: r["name"].casefold()),
+            # alle Personen, auch ausgeschlossene, damit man sie wieder einschalten kann
+            "persons": [
+                {"id": p, "phones": phones(hass, p)} for p in sorted(hass.states.async_entity_ids("person"))
+            ],
         },
     )
 
@@ -166,6 +177,18 @@ def ws_house_update(hass: HomeAssistant, connection: websocket_api.ActiveConnect
         return
     hass.config_entries.async_update_entry(entry, options={**entry.options, **changes})
     connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/leave/test", vol.Required("person"): cv.entity_domain("person")}
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_leave_test(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """Testmeldung, damit man sieht, auf welchem Handy die Warnung ankommt."""
+    if (entry := _entry(hass, connection, msg)) is None:
+        return
+    connection.send_result(msg["id"], {"sent": await entry.runtime_data.leave.async_test(msg["person"])})
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/room/add", vol.Required("area"): str})

@@ -81,6 +81,16 @@ class Uebersetzungen(unittest.TestCase):
                         self.assertIn("name", data["entity"][platform][key])
         self.assertGreaterEqual(found, 6)
 
+    def test_meldungen_in_beiden_sprachen(self):
+        tree = ast.parse((BASE / "leave.py").read_text(encoding="utf-8"))
+        node = next(n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == "TEXTS")
+        texts = ast.literal_eval(node.value)
+        self.assertEqual(set(texts), {"de", "en"})
+        self.assertEqual(set(texts["de"]), set(texts["en"]))
+        for key in texts["de"]:
+            with self.subTest(key=key):
+                self.assertEqual(re.findall(r"\{\w+\}", texts["de"][key]), re.findall(r"\{\w+\}", texts["en"][key]))
+
     def test_jeder_fensterzustand_hat_text(self):
         tree = ast.parse((BASE / "engine.py").read_text(encoding="utf-8"))
         window_cls = next(c for c in tree.body if isinstance(c, ast.ClassDef) and c.name == "Window")

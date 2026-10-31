@@ -31,7 +31,12 @@ from facade_engine import (  # noqa: E402
     Window,
     batch,
     decide,
+    LEAVE_DONE,
+    LEAVE_FORWARDED,
+    LEAVE_WAITING,
+    LEAVE_WARNED,
     in_range,
+    leave_step,
     may_move,
     situation_active,
     sleep_on,
@@ -158,7 +163,7 @@ class Werkzeuge(unittest.TestCase):
     def test_tagesphase(self):
         self.assertEqual(phase_for(23.5, 23, 7, dark=True), Phase.NIGHT)
         self.assertEqual(phase_for(6.9, 23, 7, dark=False), Phase.NIGHT)
-        self.assertEqual(phase_for(7.5, 23, 7, dark=True), Phase.NIGHT)  # Wintermorgen bleibt zu
+        self.assertEqual(phase_for(7.5, 23, 7, dark=True), Phase.DUSK)  # dunkler Wintermorgen: Spalt wie abends
         self.assertEqual(phase_for(7.5, 23, 7, dark=False), Phase.DAY)
         self.assertEqual(phase_for(17, 23, 7, dark=True), Phase.DUSK)
         self.assertEqual(phase_for(17, 23, 7, dark=False), Phase.DAY)
@@ -191,9 +196,23 @@ class Werkzeuge(unittest.TestCase):
         self.assertFalse(sleep_on("off", None))
         self.assertTrue(sleep_on("35.2", 5))  # CPAP läuft
         self.assertFalse(sleep_on("1.1", 5))  # Standby
-        self.assertFalse(sleep_on("5", 5))  # genau auf der Schwelle noch wach
+        self.assertTrue(sleep_on("5", 5))  # „ab 5 W“: CPAP läuft mit genau 5 W
+        self.assertFalse(sleep_on("4.9", 5))
         self.assertFalse(sleep_on("unavailable", 5))
         self.assertFalse(sleep_on(None, 5))
+
+    def test_beim_verlassen(self):
+        W, D = LEAVE_WAITING, LEAVE_DONE
+        self.assertEqual(leave_step(W, 0, 60, False, True, False), (W, None))  # GPS kann noch springen
+        self.assertEqual(leave_step(W, 0, 120, False, True, False), (LEAVE_WARNED, "warn_person"))
+        self.assertEqual(leave_step(LEAVE_WARNED, 0, 300, False, True, False), (LEAVE_WARNED, None))
+        self.assertEqual(leave_step(LEAVE_WARNED, 0, 420, False, True, False), (LEAVE_FORWARDED, "warn_others"))
+        self.assertEqual(leave_step(LEAVE_FORWARDED, 0, 900, False, True, False), (LEAVE_FORWARDED, None))
+        # nur ein Fenster offen: keine Weiterleitung an die anderen
+        self.assertEqual(leave_step(LEAVE_WARNED, 0, 900, False, False, True), (LEAVE_WARNED, None))
+        self.assertEqual(leave_step(W, 0, 30, True, True, False), (D, None))  # doch zu Hause
+        self.assertEqual(leave_step(LEAVE_WARNED, 0, 200, False, False, False), (D, None))  # zugemacht
+        self.assertEqual(leave_step(D, 0, 999, False, True, True), (D, None))  # „Ist gewollt“ bleibt erledigt
 
     def test_winkel_mit_ueberlauf(self):
         self.assertTrue(in_range(350, 300, 30))

@@ -13,6 +13,9 @@ CONF_NIGHT_START = "night_start"
 CONF_NIGHT_END = "night_end"
 CONF_REST_MINUTES = "rest_minutes"
 CONF_POSITIONS = "positions"
+CONF_LEAVE_ENABLED = "leave_enabled"
+CONF_LEAVE_CONTACTS = "leave_contacts"
+CONF_LEAVE_EXCLUDE_PERSONS = "leave_exclude_persons"
 
 # Raum
 CONF_AREA = "area"
@@ -38,6 +41,10 @@ DEFAULTS = {
     CONF_NIGHT_START: "23:00:00",
     CONF_NIGHT_END: "07:00:00",
     CONF_REST_MINUTES: 20,
+    CONF_LEAVE_ENABLED: True,
+    # Innentüren sollen nicht melden, deshalb wählt man die Kontakte selbst
+    CONF_LEAVE_CONTACTS: [],
+    CONF_LEAVE_EXCLUDE_PERSONS: [],
 }
 
 WINDOW_MEANS_OPTIONS = ["tilted", "open"]

@@ -26,7 +26,9 @@ gleiche Ziele fahren gleichzeitig, und jeder Raum zeigt als Entität, warum er s
 
 Beta. Eingerichtet werden Haus und Räume, gerechnet wird mit Tagesablauf, Fenster, Schlafen,
 Hitzeschutz und Handbetrieb. Je Raum gibt es Grund, Zielposition, Fenster, Schlafen und einen
-Schalter für den Handbetrieb. Noch nicht enthalten: Situationen, Sicherheit, Abendkühlung, Wecker, Regenschutz und Benachrichtigungen.
+Schalter für den Handbetrieb. Geht die letzte Person und eine gewählte Tür oder ein Fenster ist
+offen, kommt eine Push-Meldung. Noch nicht enthalten: Situationen, Sicherheit, Abendkühlung,
+Wecker, Regenschutz und weitere Benachrichtigungen.
 
 Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Version vom November,
 `2026.11.0-beta.1` eine Beta dafür. Die Nummer sagt, wann eine Version erschien, nicht für welche
@@ -81,7 +83,8 @@ as an entity.
 
 **Status:** beta. Houses and rooms can be set up; daily schedule, windows, sleep, heat protection
 and manual moves are handled; each room has entities for reason, target position, window, sleep
-and a manual switch. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
+and a manual switch. When the last person leaves while a chosen door or window is open, a push
+message is sent. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
 **Installation (beta):**
 

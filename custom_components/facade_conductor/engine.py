@@ -166,7 +166,7 @@ def sleep_on(state: str | None, watts: float | None) -> bool:
     if watts is None:
         return state == "on"
     try:
-        return float(state) > watts
+        return float(state) >= watts
     except (TypeError, ValueError):
         return False  # nicht verfügbar zählt als wach
 
@@ -174,6 +174,30 @@ def sleep_on(state: str | None, watts: float | None) -> bool:
 def still_asleep(on: bool, off_for: float | None, delay: float) -> bool:
     """Kurz aufstehen weckt den Raum nicht: aus zählt erst nach der Verzögerung als wach."""
     return on or (off_for is not None and off_for < delay)
+
+
+# Beim Verlassen: erst warten, ob die Person wirklich weg ist (springendes GPS), dann melden
+LEAVE_WARN_AFTER = 120
+LEAVE_FORWARD_AFTER = 420
+LEAVE_WAITING, LEAVE_WARNED, LEAVE_FORWARDED, LEAVE_DONE = range(4)
+
+
+def leave_step(
+    stage: int, since: float, now: float, anyone_home: bool, doors_open: bool, windows_open: bool
+) -> tuple[int, str | None]:
+    """Nächster Schritt der Warnung beim Verlassen: neue Stufe und was zu tun ist.
+
+    Erledigt, sobald jemand heimkommt oder alles zu ist. Nach 2 Minuten bekommt die gehende Person
+    eine Meldung, nach 7 Minuten ohne Antwort die anderen, aber nur bei offenen Türen.
+    """
+    if stage == LEAVE_DONE or anyone_home or not (doors_open or windows_open):
+        return LEAVE_DONE, None
+    elapsed = now - since
+    if stage == LEAVE_WAITING and elapsed >= LEAVE_WARN_AFTER:
+        return LEAVE_WARNED, "warn_person"
+    if stage == LEAVE_WARNED and elapsed >= LEAVE_FORWARD_AFTER and doors_open:
+        return LEAVE_FORWARDED, "warn_others"
+    return stage, None
 
 
 def may_move(decision: Decision, last_auto_move: float | None, now: float, rest: float = 1200) -> bool:
@@ -203,11 +227,11 @@ def direction_range(direction: str, width: float = 45) -> tuple[float, float]:
 
 
 def phase_for(hour: float, night_start: float, night_end: float, dark: bool) -> Phase:
-    """Nachtschließung nach Uhrzeit. Dunkel am Morgen bleibt Nacht, dunkel am Abend ist Dämmerung."""
+    """Nachtschließung nach Uhrzeit. Außerhalb davon heißt dunkel Dämmerung, morgens wie abends."""
     if situation_active(hour, night_start, night_end):
         return Phase.NIGHT
     if dark:
-        return Phase.NIGHT if hour < 12 else Phase.DUSK
+        return Phase.DUSK
     return Phase.DAY
 
 

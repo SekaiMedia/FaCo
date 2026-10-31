@@ -47,6 +47,7 @@ from .const import (
     FORECAST_INTERVAL_MINUTES,
     MODE_AUTO,
     MODE_DRY_RUN,
+    MODE_OFF,
     SUBENTRY_ROOM,
 )
 from .engine import (
@@ -67,6 +68,7 @@ from .engine import (
     sleep_on,
     still_asleep,
 )
+from .leave import LeaveWatcher
 
 _LOGGER = logging.getLogger(__name__)
 SUN = "sun.sun"
@@ -113,6 +115,7 @@ class Conductor:
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._pending: CALLBACK_TYPE | None = None
+        self.leave = LeaveWatcher(hass, house, lambda: self.mode != MODE_OFF)
         self.rooms = [
             self._room(sub.subentry_id, sub.title, dict(sub.data))
             for sub in entry.subentries.values()
@@ -160,11 +163,13 @@ class Conductor:
         self._unsubs.append(
             async_track_time_interval(self.hass, self._refresh_forecast, timedelta(minutes=FORECAST_INTERVAL_MINUTES))
         )
+        await self.leave.async_start()
         await self._refresh_forecast()
         await self.async_evaluate()
 
     @callback
     def async_stop(self) -> None:
+        self.leave.async_stop()
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()

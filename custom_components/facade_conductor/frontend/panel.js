@@ -6,7 +6,7 @@ const STRINGS = await fetch(new URL("./strings.json", import.meta.url))
   .catch(() => ({}));
 
 const TABS = ["overview", "rooms", "settings"];
-const SECTIONS = ["schedule", "windows", "heat", "daylight", "behavior", "about"];
+const SECTIONS = ["schedule", "windows", "leave", "heat", "daylight", "behavior", "about"];
 const MODES = ["off", "dry_run", "auto"];
 const DIRECTIONS = ["none", "n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const POSITIONS = ["day", "dusk", "night", "tilted", "open", "shade"];
@@ -252,6 +252,42 @@ class FacadeConductorPanel extends HTMLElement {
        <h3>${esc(this._t("windows_list"))}</h3>
        ${rows || `<p class="muted">${esc(this._t("no_contact"))}</p>`}
        <p class="muted">${esc(this._t("windows_room_hint"))}</p>`,
+    ];
+  }
+
+  _sec_leave(info) {
+    const h = info.house;
+    const chosen = new Set(h.leave_contacts || []);
+    const excluded = new Set(h.leave_exclude_persons || []);
+    const contacts = Object.keys(this._hass.states)
+      .filter((id) => id.startsWith("binary_sensor.") && WINDOW_CLASSES.includes(this._hass.states[id].attributes.device_class))
+      .sort((a, b) => this._name(a).localeCompare(this._name(b)));
+    const isDoor = (id) => ["door", "garage_door"].includes(this._hass.states[id].attributes.device_class);
+    const household = info.persons.filter((person) => !excluded.has(person.id)).length;
+    return [
+      h.leave_enabled ? this._t("sum_leave", { contacts: chosen.size, persons: household }) : this._t("off"),
+      `<label class="switch"><input type="checkbox" id="l-enabled" ${h.leave_enabled ? "checked" : ""}> ${esc(this._t("leave_enabled"))}</label>
+       <p class="muted">${esc(this._t("leave_hint"))}</p>
+       <h3>${esc(this._t("leave_contacts"))}</h3>
+       <p class="muted">${esc(this._t("leave_contacts_hint"))}</p>
+       <div class="checks">
+         ${contacts
+           .map(
+             (id) => `<label><input type="checkbox" data-leave-contact value="${esc(id)}" ${chosen.has(id) ? "checked" : ""}>
+               ${esc(this._name(id))} <span class="muted">· ${esc(this._t(isDoor(id) ? "door" : "window"))} · ${esc(this._stateText(id))}</span></label>`,
+           )
+           .join("") || `<p class="muted">${esc(this._t("no_contact"))}</p>`}
+       </div>
+       <h3>${esc(this._t("leave_persons"))}</h3>
+       ${info.persons
+         .map(
+           (person) => `<div class="row start">
+             <label><input type="checkbox" data-leave-person value="${esc(person.id)}" ${excluded.has(person.id) ? "" : "checked"}> ${esc(this._name(person.id))}</label>
+             <span class="muted">${esc(person.phones.length ? person.phones.map((x) => x.replace("mobile_app_", "")).join(", ") : this._t("no_phone"))}</span>
+             ${person.phones.length ? `<button class="btn2" data-leave-test="${esc(person.id)}">${esc(this._t("send_test"))}</button>` : ""}
+           </div>`,
+         )
+         .join("")}`,
     ];
   }
 
@@ -612,6 +648,25 @@ class FacadeConductorPanel extends HTMLElement {
     );
     root.querySelectorAll("[data-hpos]").forEach((el) =>
       el.addEventListener("change", () => el.value !== "" && saveHouse({ positions: { [el.dataset.hpos]: Number(el.value) } })),
+    );
+
+    root.getElementById("l-enabled")?.addEventListener("change", (e) => saveHouse({ leave_enabled: e.target.checked }));
+    root.querySelectorAll("[data-leave-contact]").forEach((el) =>
+      el.addEventListener("change", () =>
+        saveHouse({ leave_contacts: [...root.querySelectorAll("[data-leave-contact]:checked")].map((c) => c.value) }),
+      ),
+    );
+    root.querySelectorAll("[data-leave-person]").forEach((el) =>
+      el.addEventListener("change", () =>
+        saveHouse({
+          leave_exclude_persons: [...root.querySelectorAll("[data-leave-person]:not(:checked)")].map((c) => c.value),
+        }),
+      ),
+    );
+    root.querySelectorAll("[data-leave-test]").forEach((el) =>
+      el.addEventListener("click", () =>
+        this._call({ type: "facade_conductor/leave/test", person: el.dataset.leaveTest }, this._t("test_sent")),
+      ),
     );
 
     const save = (changes) => {
