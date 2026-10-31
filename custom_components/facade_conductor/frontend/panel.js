@@ -55,6 +55,15 @@ class FacadeConductorPanel extends HTMLElement {
     this._coverFilter = "";
     this._draft = {};
     this._help = false;
+    // Home Assistant setzt hass und panel teils schon, bevor das Element definiert ist (strings.json lädt
+    // noch). Dann liegen sie als eigene Felder vor den Settern und das Panel bliebe leer.
+    for (const prop of ["panel", "narrow", "hass"]) {
+      if (Object.hasOwn(this, prop)) {
+        const value = this[prop];
+        delete this[prop];
+        this[prop] = value;
+      }
+    }
   }
 
   set hass(hass) {
