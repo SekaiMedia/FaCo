@@ -26,5 +26,5 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Logo im Brands-Verzeichnis folgt vor der Aufnahme in den Standardkatalog
+          # Das Logo liegt im brand-Ordner der Integration (ab Home Assistant 2026.3), nicht im Brands-Verzeichnis
           ignore: brands

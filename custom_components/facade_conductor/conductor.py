@@ -164,6 +164,7 @@ class Room:
     covers: list[str]
     window_sensor: str | None
     window_means: Window
+    sleep_sensor: str | None
     tilt_sensor: str | None = None
     humidity_sensor: str | None = None
     wall_sensor: str | None = None
@@ -179,7 +180,6 @@ class Room:
     absolute: float | None = None
     mold: str | None = None
     humidity_spot: float | None = None
-    sleep_sensor: str | None
     wake_delay: float = 0
     sleep_watts: float | None = None  # gesetzt, wenn der Schlaf-Geber ein Leistungssensor ist
     last_asleep: float | None = None
