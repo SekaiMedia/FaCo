@@ -241,6 +241,7 @@ class Conductor:
         self.safety = list(house[CONF_SAFETY])
         self.leave = LeaveWatcher(hass, house, lambda: self.mode != MODE_OFF)
         self._armed = False
+        self.hub_id: str | None = None  # Geräte-id des Hausgeräts, für via_device_id
         self.external_alarm: int | None = None  # Aktion facade_conductor.alarm
         self.messages = Messages(hass, house, lambda: self.leave.persons, self._resume, self._quiet, self._retry)
         self.rooms = [

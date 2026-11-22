@@ -45,7 +45,7 @@ class RoomEntity(Entity):
             manufacturer="SekaiMedia",
             model="Facade Conductor",
             entry_type=DeviceEntryType.SERVICE,
-            via_device=(DOMAIN, conductor.entry.entry_id),
+            via_device_id=conductor.hub_id,
         )
 
     async def async_added_to_hass(self) -> None:

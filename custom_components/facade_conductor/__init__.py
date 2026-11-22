@@ -13,6 +13,7 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
@@ -20,6 +21,7 @@ from homeassistant.loader import async_get_integration
 from . import websocket
 from .conductor import Conductor
 from .const import DOMAIN
+from .entity import hub_device
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.COVER, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -51,6 +53,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: FacadeConfigEntry) -> bool:
     conductor = Conductor(hass, entry)
     entry.runtime_data = conductor
+    # das Hausgerät zuerst anlegen: die Raumgeräte verweisen über seine id darauf (via_device_id)
+    hub = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **hub_device(entry.entry_id))
+    conductor.hub_id = hub.id
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Jedes Speichern lädt den Eintrag neu. Die Seite bleibt dabei stehen, sonst springt der Browser weg.

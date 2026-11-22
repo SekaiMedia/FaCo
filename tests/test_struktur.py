@@ -27,5 +27,14 @@ class Struktur(unittest.TestCase):
                             seen_default = name
 
 
+    def test_kein_via_device(self):
+        # via_device ist seit Home Assistant 2026.8 abgekündigt und bricht in 2027.8; via_device_id ersetzt es
+        for path in BASE.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            used = [k.arg for n in ast.walk(tree) if isinstance(n, ast.Call) for k in n.keywords if k.arg == "via_device"]
+            with self.subTest(file=path.name):
+                self.assertEqual(used, [])
+
+
 if __name__ == "__main__":
     unittest.main()
