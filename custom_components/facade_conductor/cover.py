@@ -11,7 +11,7 @@ from typing import Any
 from homeassistant.components.cover import ATTR_POSITION, CoverDeviceClass, CoverEntity, CoverEntityFeature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import floor_registry as fr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -120,10 +120,12 @@ class RoomCover(RoomEntity, GroupMixin):
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # Raumgruppen gehören in ihren Bereich, dann versteht Assist „Wohnzimmer runter“ ohne Zusatz
-        device = self.device_entry
-        if device and device.area_id is None and self.room.area:
-            dr.async_get(self.hass).async_update_device(device.id, area_id=self.room.area)
+        # Raumgruppen gehören in ihren Bereich, dann versteht Assist „Wohnzimmer runter“ ohne Zusatz. Der Bereich
+        # kommt an die Gruppe, nicht ans Raumgerät: dort stünde er seit HA 2026.8 vor jeder neuen Entitäts-ID,
+        # und aus Gerät „Büro“ im Bereich „Büro“ würde buro_buro_…
+        entry, device = self.registry_entry, self.device_entry
+        if entry and entry.area_id is None and not (device and device.area_id) and self.room.area:
+            er.async_get(self.hass).async_update_entity(self.entity_id, area_id=self.room.area)
 
     @property
     def available(self) -> bool:

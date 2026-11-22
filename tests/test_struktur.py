@@ -36,5 +36,20 @@ class Struktur(unittest.TestCase):
                 self.assertEqual(used, [])
 
 
+    def test_kein_bereich_am_geraet(self):
+        # ein Bereich am Raumgerät steht seit HA 2026.8 vor jeder neuen Entitäts-ID: aus „Büro“ würde buro_buro_…
+        for path in BASE.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            calls = [
+                n.func.attr
+                for n in ast.walk(tree)
+                if isinstance(n, ast.Call)
+                and getattr(n.func, "attr", "") == "async_update_device"
+                and any(k.arg == "area_id" for k in n.keywords)
+            ]
+            with self.subTest(file=path.name):
+                self.assertEqual(calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
