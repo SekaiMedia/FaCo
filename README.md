@@ -24,7 +24,7 @@ gleiche Ziele fahren gleichzeitig, und jeder Raum zeigt als Entität, warum er s
 
 ## Stand
 
-Beta. Eingerichtet werden Haus und Räume, gerechnet wird mit Tagesablauf, Fenster, Schlafen,
+Stabil seit `2026.11.0`. Eingerichtet werden Haus und Räume, gerechnet wird mit Tagesablauf, Fenster, Schlafen,
 Hitzeschutz und Handbetrieb. Je Raum gibt es Grund, Zielposition, Fenster, Schlafen und einen
 Schalter für den Handbetrieb. Geht die letzte Person und eine gewählte Tür oder ein Fenster ist
 offen, kommt eine Push-Meldung. Situationen wie „Fernseher an“ oder ein Kinomodus halten einen Raum
@@ -52,7 +52,7 @@ Versionen folgen dem Kalender wie bei Home Assistant: `2026.11.0` ist die Versio
 Home-Assistant-Version sie gilt. Eine Beta wird stabil, wenn sie mindestens eine Woche ohne
 Eingriff im Betrieb lief, auch mit der neuen Home-Assistant-Version des Monats.
 
-## Installation (Beta)
+## Installation
 
 1. Dieses Repository in HACS beziehungsweise im Marketplace hinzufügen:
    1. HACS öffnen, oben rechts auf die drei Punkte tippen und „Benutzerdefinierte Repositories“
@@ -66,15 +66,14 @@ Eingriff im Betrieb lief, auch mit der neuen Home-Assistant-Version des Monats.
    3. Bei „Typ“ die Kategorie „Integration“ wählen und auf „Hinzufügen“ tippen.
 2. Facade Conductor herunterladen:
    1. In HACS nach „Facade Conductor“ suchen und öffnen.
-   2. Auf „Herunterladen“ tippen, „Beta-Versionen anzeigen“ einschalten und die neueste Beta
-      wählen.
+   2. Auf „Herunterladen“ tippen.
 3. Home Assistant neu starten.
-4. Damit HACS auch spätere Betas als Update anbietet: unter Geräte und Dienste, HACS, Gerät
-   Facade Conductor den Schalter „Vorabversion“ aktivieren und einschalten. Sonst meldet HACS
-   den Stand des Hauptzweigs als Update, und der ist älter als die Beta.
-5. Einstellungen, Geräte und Dienste, Integration hinzufügen: Facade Conductor.
-6. Das Haus einrichten. Danach erscheint „Facade Conductor“ in der Seitenleiste: Dort zeigt die
+4. Einstellungen, Geräte und Dienste, Integration hinzufügen: Facade Conductor.
+5. Das Haus einrichten. Danach erscheint „Facade Conductor“ in der Seitenleiste: Dort zeigt die
    Übersicht jeden Raum mit Position und Grund, unter „Räume“ werden Räume angelegt und eingestellt.
+
+Wer Betas vorab testen möchte: in HACS bei Facade Conductor „Beta-Versionen anzeigen“ einschalten,
+und unter Geräte und Dienste, HACS, Gerät Facade Conductor den Schalter „Vorabversion“ aktivieren.
 
 **Neu eingerichtet läuft alles im Probelauf.** Die Integration rechnet und zeigt je Raum
 „Grund“ und „Zielposition“, fährt aber nichts. So lässt sie sich neben bestehenden
@@ -98,7 +97,7 @@ sleep, heat protection, daily schedule), decides
 all rooms in the same cycle, moves matching targets at the same time and exposes the reason
 as an entity.
 
-**Status:** beta. Houses and rooms can be set up; daily schedule, windows, sleep, heat protection
+**Status:** stable since `2026.11.0`. Houses and rooms can be set up; daily schedule, windows, sleep, heat protection
 and manual moves are handled; each room has entities for reason, target position, window, sleep
 and a manual switch. When the last person leaves while a chosen door or window is open, a push
 message is sent. Situations such as "TV on" or a cinema mode hold a room or move it to a fixed
@@ -117,7 +116,7 @@ constant tilting in the cold, heat from outside and open windows when the alarm 
 gets ventilation advice, a mould risk and its next move, and automations call the actions `pause`,
 `resume`, `wake` and `alarm` instead of moving shutters themselves. Versions follow the calendar like Home Assistant: `2026.11.0` is the November release.
 
-**Installation (beta):**
+**Installation:**
 
 1. Add this repository to HACS or the Marketplace:
    1. Open HACS, tap the three dots in the top right corner and choose "Custom repositories".
@@ -128,14 +127,13 @@ gets ventilation advice, a mould risk and its next move, and automations call th
       ```
 
    3. Choose "Integration" as "Type" and tap "Add".
-2. Search for Facade Conductor in HACS, tap "Download", enable "Show beta versions" and pick
-   the latest beta.
+2. Search for Facade Conductor in HACS and tap "Download".
 3. Restart Home Assistant and add the Facade Conductor integration.
 
 Rooms are added and adjusted on the Facade Conductor page in
 the sidebar. New setups start in **dry run**: reasons and target positions
-are shown, nothing moves until you switch the operating mode to automatic. To receive later
-betas as updates, enable the HACS "Pre-release" switch on the Facade Conductor device.
+are shown, nothing moves until you switch the operating mode to automatic. To test betas early,
+enable "Show beta versions" in HACS and the "Pre-release" switch on the Facade Conductor device.
 
 **Help:** please open an [issue](https://github.com/SekaiMedia/FaCo/issues).
 
